@@ -19,6 +19,7 @@ import (
 	_ "github.com/antavik/glinet-cli/src/cmd/auth"
 	_ "github.com/antavik/glinet-cli/src/cmd/status"
 	_ "github.com/antavik/glinet-cli/src/cmd/vpn"
+	_ "github.com/antavik/glinet-cli/src/cmd/web"
 )
 
 // version is set at build time with -ldflags "-X main.version=1.2.3".
