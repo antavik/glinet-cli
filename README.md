@@ -190,24 +190,26 @@ tag onto the new one.
 
 ## Release
 
-A release is a tag plus binaries on GitHub. The Homebrew formula in
-[antavik/homebrew-tap](https://github.com/antavik/homebrew-tap) builds from
-the source archive GitHub makes for each tag, not from those binaries.
+Releases are automated. Every merge into `main` runs the checks, tags HEAD
+with the next version (a `feat:` commit bumps the minor version, anything
+else the patch version; the first release is `v0.1.0`), builds the platform
+archives, publishes a GitHub release, and pushes the matching formula to
+[antavik/homebrew-tap](https://github.com/antavik/homebrew-tap). The formula
+installs the prebuilt binary for macOS or Linux (arm64/amd64), verified
+against the release's `checksums.txt`. The tap update needs the
+`HOMEBREW_TAP_TOKEN` repository secret (a fine-grained PAT with Contents
+write access to the tap); without it releases still publish and the
+Homebrew step skips itself.
 
-1. Tag and push: `git tag -a v1.2.3 -m "glinet-cli 1.2.3" && git push origin v1.2.3`,
-   or let the `make hooks` prompt create the tag and just push it.
-2. Publish binaries: `make publish`. It builds `dist/` and uploads it to a
-   GitHub release for the tag with `gh` (run `gh auth login` once). It stops
-   if the tree has changes or HEAD is not the tag.
-3. The tap's daily `brew bump` workflow opens a pull request with the new URL
-   and SHA-256. To skip the wait, run
-   `brew bump-formula-pr --version=1.2.3 antavik/tap/glinet-cli`.
-4. When the pull request's `brew test-bot` checks pass, publish bottles with
-   the tap's `brew pr-pull` workflow (Actions tab), or run
-   `brew pr-pull --tap=antavik/tap --head-sha=<reviewed SHA> <PR number>`.
+To release a specific version by hand, tag the commit on `main` and push the
+tag: `git tag -a v1.2.3 -m "glinet-cli 1.2.3" && git push origin v1.2.3`.
+The next workflow run reuses a tag that already sits at HEAD. For a fully
+local release, `make publish` builds `dist/` and uploads it to the tag's
+GitHub release with `gh` (run `gh auth login` once); it stops if the tree has
+changes or HEAD is not the tag. Note the Homebrew formula is only updated by
+the CI pipeline.
 
-Tags must start with `v` and follow semantic versioning. Homebrew reads the
-version from the archive name.
+Tags must start with `v` and follow semantic versioning.
 
 ## License
 
