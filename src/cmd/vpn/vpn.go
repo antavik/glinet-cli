@@ -23,6 +23,7 @@ func init() {
 			"vpn [status]\tlist VPN tunnels",
 			"vpn on <id|name|all>\tturn VPN tunnel(s) on",
 			"vpn off <id|name|all>\tturn VPN tunnel(s) off",
+			"vpn restart <id|name|all>\trestart VPN tunnel(s) (off, then on)",
 		},
 		Parse: parse,
 	})
@@ -36,6 +37,11 @@ func parse(args []string) cmd.Action {
 		target, enable := args[1], args[0] == "on"
 		return cmd.WithClient(func(ctx context.Context, c *glinet.Client) error {
 			return setTunnels(ctx, c, target, enable)
+		})
+	case len(args) == 2 && args[0] == "restart":
+		target := args[1]
+		return cmd.WithClient(func(ctx context.Context, c *glinet.Client) error {
+			return restartTunnels(ctx, c, target)
 		})
 	}
 	return nil
@@ -86,6 +92,45 @@ func setTunnels(ctx context.Context, c *glinet.Client, target string, enable boo
 			continue
 		}
 		fmt.Printf("%s: %s\n", t.Name, onOff(enable))
+	}
+	return errors.Join(errs...)
+}
+
+// restartTunnels turns each tunnel matching target off, then on, one tunnel at
+// a time, ignoring the current state, so a disabled tunnel ends up enabled. A
+// tunnel whose off fails is not turned on. It keeps going after a failure and
+// reports all errors, and stops early once ctx is cancelled.
+func restartTunnels(ctx context.Context, c *glinet.Client, target string) error {
+	tunnels, err := c.Tunnels(ctx)
+	if err != nil {
+		return err
+	}
+	selected, err := selectTunnels(tunnels, target)
+	if err != nil {
+		return err
+	}
+	if len(selected) == 0 {
+		fmt.Println("No VPN tunnels configured.")
+		return nil
+	}
+
+	var errs []error
+	for _, t := range selected {
+		// Ctrl+C or the command timeout stops the loop instead of letting
+		// every remaining tunnel fail one by one.
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
+		if err := c.SetTunnel(ctx, t.ID, false); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", t.Name, err))
+			continue
+		}
+		if err := c.SetTunnel(ctx, t.ID, true); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", t.Name, err))
+			continue
+		}
+		fmt.Printf("%s: restarted\n", t.Name)
 	}
 	return errors.Join(errs...)
 }
