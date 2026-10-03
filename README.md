@@ -91,6 +91,8 @@ ID    NAME            ENABLED  STATUS
 $ glinet-cli vpn on 2002          # by tunnel ID
 $ glinet-cli vpn off "Proton/nl-free"  # by name, case-insensitive
 $ glinet-cli vpn off all
+
+$ glinet-cli web                  # open the router web UI in the default browser
 ```
 
 Tunnels already in the requested state are left alone. With `all`, a failure
@@ -169,7 +171,7 @@ tag onto the new one.
 - `src/main.go`: flags, help text, picks the command.
 - `src/cmd/`: what commands share: the `Command` type, the registry
   (`Register`, `Lookup`, `All`) and `WithClient`, which logs in to the router.
-- `src/cmd/auth`, `src/cmd/status`, `src/cmd/vpn`: one package per command.
+- `src/cmd/auth`, `src/cmd/status`, `src/cmd/vpn`, `src/cmd/web`: one package per command.
 - `src/internal/glinet/`: router API client. `client.go` has JSON-RPC and
   login; every other file covers one router API module (`system.go`,
   `vpnclient.go`).
