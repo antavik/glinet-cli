@@ -9,11 +9,11 @@ from the VPN Dashboard (WireGuard and OpenVPN alike).
 With [Homebrew](https://brew.sh) on macOS or Linux:
 
 ```sh
-brew install antavik/tap/glinet-cli
+brew install antavik/apps/glinet-cli
 ```
 
 Using the full name trusts only this formula, not the whole
-[tap](https://github.com/antavik/homebrew-tap). `brew upgrade` picks up new
+[tap](https://github.com/antavik/homebrew-apps). `brew upgrade` picks up new
 releases.
 
 Prebuilt archives for macOS, Linux and Windows (amd64 and arm64) are on the
@@ -194,7 +194,7 @@ Releases are automated. Every merge into `main` runs the checks, tags HEAD
 with the next version (a `feat:` commit bumps the minor version, anything
 else the patch version; the first release is `v0.1.0`), builds the platform
 archives, publishes a GitHub release, and pushes the matching formula to
-[antavik/homebrew-tap](https://github.com/antavik/homebrew-tap). The formula
+[antavik/homebrew-apps](https://github.com/antavik/homebrew-apps). The formula
 installs the prebuilt binary for macOS or Linux (arm64/amd64), verified
 against the release's `checksums.txt`. The tap update needs the
 `HOMEBREW_TAP_TOKEN` repository secret (a fine-grained PAT with Contents

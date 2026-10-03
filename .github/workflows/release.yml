@@ -129,7 +129,7 @@ jobs:
         if: steps.guard.outputs.ok == 'true'
         uses: actions/checkout@v4
         with:
-          repository: antavik/homebrew-tap
+          repository: antavik/homebrew-apps
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
 
