@@ -51,6 +51,8 @@ vuln: ## Check deps and the local Go's standard library for known vulnerabilitie
 fmt: ## Format the code
 	$(GOLANGCI_LINT) fmt ./...
 
+check: lint test vuln fmt ## Run all checks
+
 dist: ## Build release archives and checksums.txt into dist/
 	@rm -rf $(DIST)
 	@mkdir -p $(DIST)
