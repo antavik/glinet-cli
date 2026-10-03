@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# Serialize releases: never cancel an in-flight release, queue instead.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Lint, test and security checks
+        run: make check
+
+  tag:
+    needs: checks
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.tag.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag HEAD with the release version
+        id: tag
+        run: |
+          set -euo pipefail
+          semver='^v[0-9]+\.[0-9]+\.[0-9]+$'
+
+          # Rerun-idempotent: if HEAD already carries a strict-semver v* tag,
+          # reuse it instead of minting a new version for the same commit.
+          # Enumerate all tags at HEAD so a stray non-semver v* tag can't hide
+          # a valid one.
+          existing=$(git tag --points-at HEAD | { grep -E "$semver" || true; } | sort -V | tail -1)
+          if [ -n "$existing" ]; then
+            echo "reusing existing tag $existing"
+            echo "tag_name=$existing" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Next version is derived from the commits since the latest
+          # strict-semver tag (or v0.1.0 when the repo has none yet):
+          # a conventional `feat:` commit bumps minor (patch resets to 0),
+          # anything else bumps patch. The `|| true` keeps the pipeline
+          # alive under set -e when no tag matches.
+          latest=$(git tag -l | { grep -E "$semver" || true; } | sort -V | tail -1)
+          if [ -z "$latest" ]; then
+            next="v0.1.0"
+          elif git log --format=%s "$latest..HEAD" | grep -Eq '^feat(\([^)]*\))?!?:'; then
+            next="v$(printf '%s\n' "${latest#v}" | awk -F. '{ $2++; $3 = 0; print $1 "." $2 "." $3 }')"
+          else
+            next="v$(printf '%s\n' "${latest#v}" | awk -F. '{ $3++; print $1 "." $2 "." $3 }')"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$next" -m "Release $next"
+          git push origin "$next"
+          echo "tag_name=$next" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.tag_name }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Preflight required tools
+        run: |
+          set -euo pipefail
+          for tool in gh zip tar sha256sum; do
+            command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
+          done
+
+      - name: Build release archives for all platforms
+        env:
+          TAG: ${{ needs.tag.outputs.tag_name }}
+        run: make dist VERSION="${TAG#v}"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.tag.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          # Rerun-idempotent: top up assets if the release already exists.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" --clobber dist/*
+          else
+            gh release create "$TAG" --verify-tag --generate-notes dist/*
+          fi

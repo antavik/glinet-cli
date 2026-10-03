@@ -28,9 +28,11 @@ GOVULNCHECK ?= go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 SHA256 := $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo shasum -a 256)
 
 .DEFAULT_GOAL := all
-.PHONY: all build release test lint vuln fmt dist publish hooks clean help
+.PHONY: all build release test lint vuln check fmt dist publish hooks clean help
 
 all: lint test build ## Lint, test and build
+
+check: lint test vuln ## All CI checks: lint, test and vulnerability scan
 
 build: ## Build ./glinet-cli for this machine
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) $(PKG)
