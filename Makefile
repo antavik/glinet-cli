@@ -2,7 +2,7 @@ BINARY := glinet-cli
 PKG    := ./src
 DIST   := dist
 
-# Coverage profile written by "make cover". Override: make cover COVERAGE_FILE=cover.out
+# Coverage profile written by "make test". Override: make test COVERAGE_FILE=cover.out
 COVERAGE_FILE := coverage.out
 
 # Release targets, built with CGO off. go-keyring needs no cgo on any of them.
@@ -31,7 +31,7 @@ GOVULNCHECK ?= go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 SHA256 := $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo shasum -a 256)
 
 .DEFAULT_GOAL := all
-.PHONY: all build release test cover lint vuln check fmt dist publish hooks clean help
+.PHONY: all build release test lint vuln check fmt dist publish hooks clean help
 
 all: lint test build ## Lint, test and build
 
@@ -43,10 +43,7 @@ build: ## Build ./glinet-cli for this machine
 release: lint test vuln ## Build ./glinet-cli without debug info
 	go build $(RELEASE_FLAGS) -o $(BINARY) $(PKG)
 
-test: ## Run tests with the race detector
-	go test -race ./...
-
-cover: ## Run tests with the race detector and print total coverage
+test: ## Run tests with the race detector and print total coverage
 	go test -race -coverprofile=$(COVERAGE_FILE) ./...
 	go tool cover -func=$(COVERAGE_FILE) | tail -1
 
