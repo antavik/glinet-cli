@@ -16,7 +16,7 @@ import (
 func init() {
 	cmd.Register(cmd.Command{
 		Name:  "web",
-		Usage: []string{"web\topen the router web interface in the default browser"},
+		Usage: []string{"web\topen the router web interface in browser"},
 		Parse: parse,
 	})
 }
@@ -36,7 +36,9 @@ func open(ctx context.Context, cfg config.Config) error {
 type runner func(ctx context.Context, name string, args ...string) error
 
 func execRunner(ctx context.Context, name string, args ...string) error {
-	return exec.CommandContext(ctx, name, args...).Run()
+	// The URL is validated as http(s) with a host by launch before it reaches
+	// this point, so it cannot name another program or scheme.
+	return exec.CommandContext(ctx, name, args...).Run() //nolint:gosec // G204: see comment above
 }
 
 // launch opens routerURL in the default browser of the operating system goos
