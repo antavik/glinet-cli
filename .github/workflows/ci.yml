@@ -16,5 +16,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Lint, test and security checks
-        run: make check
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make cover
+
+      - name: Security
+        run: make vuln
