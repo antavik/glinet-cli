@@ -91,11 +91,16 @@ ID    NAME            ENABLED  STATUS
 $ glinet-cli vpn on 2002          # by tunnel ID
 $ glinet-cli vpn off "Proton/nl-free"  # by name, case-insensitive
 $ glinet-cli vpn off all
+$ glinet-cli vpn restart 2001     # turn off, then on
+$ glinet-cli vpn restart all
 ```
 
-Tunnels already in the requested state are left alone. With `all`, a failure
-on one tunnel does not stop the others; the command exits non-zero and lists
-every error.
+`on` and `off` leave tunnels already in the requested state alone. `restart`
+cycles each tunnel off, then on, one at a time, regardless of its current
+state, so `restart all` leaves every tunnel on, including ones that were off.
+With `all`, a failure on one tunnel does not stop the others; the command exits
+non-zero and lists every error. If a tunnel fails to turn off, it is not turned
+on.
 
 ## How it works
 

@@ -17,6 +17,9 @@ func TestParseCommand(t *testing.T) {
 		{"vpn", "status"},
 		{"vpn", "on", "all"},
 		{"vpn", "off", "Home/WG"},
+		{"vpn", "restart", "all"},
+		{"vpn", "restart", "2001"},
+		{"vpn", "restart", "Home/WG"},
 	}
 	for _, args := range valid {
 		if parseCommand(args) == nil {
@@ -32,6 +35,8 @@ func TestParseCommand(t *testing.T) {
 		{"vpn", "on"},
 		{"vpn", "toggle", "all"},
 		{"vpn", "on", "a", "b"},
+		{"vpn", "restart"},
+		{"vpn", "restart", "a", "b"},
 	}
 	for _, args := range invalid {
 		if parseCommand(args) != nil {

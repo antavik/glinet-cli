@@ -26,6 +26,14 @@ const (
 // Handler answers a "call" request given its arguments object.
 type Handler func(args json.RawMessage) any
 
+// RPCError returned by a Handler (as a value or non-nil pointer) makes the
+// router answer with a JSON-RPC error instead of a result, so tests can
+// exercise failing calls.
+type RPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
 // Router mimics firmware 4.9.0: it accepts User and Password and answers
 // "call" requests from handlers keyed by "module.function". Other calls fail
 // with "Method not found", and calls after logout with "Access denied".
@@ -100,6 +108,14 @@ func NewRouter(t testing.TB, calls map[string]Handler) *Router {
 				rpcErr = &rpcError{Code: -32601, Message: "Method not found"}
 			default:
 				result = h(p[3])
+				switch e := result.(type) {
+				case RPCError:
+					rpcErr, result = &rpcError{Code: e.Code, Message: e.Message}, nil
+				case *RPCError:
+					if e != nil {
+						rpcErr, result = &rpcError{Code: e.Code, Message: e.Message}, nil
+					}
+				}
 			}
 		default:
 			rpcErr = &rpcError{Code: -32601, Message: "Method not found"}
