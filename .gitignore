@@ -1,0 +1,7 @@
+/glinet-cli
+/dist/
+
+# other
+.codegraph/
+.opencode/
+.claude/

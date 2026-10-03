@@ -1,0 +1,18 @@
+version: "2"
+
+linters:
+  # On top of the standard set: errcheck, govet, ineffassign, staticcheck, unused.
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - misspell
+    - nolintlint
+  exclusions:
+    presets:
+      # Unchecked Close, Flush and fmt.Print* errors.
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofmt

@@ -1,0 +1,114 @@
+#!/bin/sh
+# The released version is the latest vX.Y.Z tag: `make build`, `make publish`
+# and the Homebrew formula all read it from there, so there is no version file
+# to edit. Ask right after the commit, while the change is still fresh, and tag
+# it with the next version. Tagging leaves the tree alone and makes no commit.
+#
+# Enable once per clone:  make hooks
+# Skip a single commit:   GLINET_SKIP_VERSION_BUMP=1 git commit ...
+
+set -eu
+
+[ "${GLINET_SKIP_VERSION_BUMP:-}" = "1" ] && exit 0
+
+# X.Y.Z and nothing else: the fields are fed to $(( )) below. No leading
+# zeros: semver forbids them and $(( )) reads 08 as bad octal and fails.
+is_version() {
+	case "$1" in
+		*[!0-9.]* | *..* | .* | *. | 0[0-9]* | *.0[0-9]*) return 1 ;;
+	esac
+	[ "$(printf '%s' "$1" | tr -d 0-9)" = ".." ]
+}
+
+# Rebase and cherry-pick replay commits in bulk; prompting there would stall the
+# operation and tag commits that are about to be rewritten. A merge leaves no
+# marker behind by the time this runs – it is the second parent that gives it
+# away.
+for marker in rebase-merge rebase-apply CHERRY_PICK_HEAD BISECT_LOG; do
+	[ -e "$(git rev-parse --git-path "$marker")" ] && exit 0
+done
+git rev-parse --verify --quiet HEAD^2 >/dev/null && exit 0
+
+# Already released, e.g. a tag moved here by hand.
+git describe --tags --exact-match --match 'v[0-9]*' HEAD >/dev/null 2>&1 && exit 0
+
+# No terminal (CI, GUI clients, scripts) – nothing to ask. The hook runs with
+# stdin closed, so talk to the controlling terminal instead, which also keeps
+# the prompt visible when the commit output is redirected.
+( : < /dev/tty ) 2>/dev/null || exit 0
+exec < /dev/tty > /dev/tty 2>&1
+
+# --amend replaces the commit, but a tag the hook put on it stays behind on the
+# old one. Moving it is left to the user: it may have been pushed already.
+case "$(git reflog -1 --format=%gs 2>/dev/null)" in
+	"commit (amend):"*)
+		for tag in $(git tag --points-at 'HEAD@{1}' --list 'v[0-9]*'); do
+			printf '\npost-commit: %s still points at the commit you amended. Move it:\n' "$tag"
+			printf '  git tag -f -a %s -m "glinet-cli %s"\n' "$tag" "${tag#v}"
+		done
+		;;
+esac
+
+# The highest version on any branch, not just the nearest one behind HEAD: a
+# tag left on a commit that --amend replaced is no longer reachable, and
+# offering its number again would fail.
+current=
+for tag in $(git tag --list 'v[0-9]*' --sort=-v:refname); do
+	if is_version "${tag#v}"; then
+		current=${tag#v}
+		break
+	fi
+done
+
+if [ -n "$current" ]; then
+	major=${current%%.*}
+	rest=${current#*.}
+	minor=${rest%%.*}
+	patch=${rest##*.}
+	shown=$current
+else
+	major=0 minor=0 patch=0
+	shown="none yet"
+fi
+
+next_major="$((major + 1)).0.0"
+next_minor="$major.$((minor + 1)).0"
+next_patch="$major.$minor.$((patch + 1))"
+
+printf '\nCurrent version: %s\n' "$shown"
+printf '  [p] patch  -> %s\n' "$next_patch"
+printf '  [m] minor  -> %s\n' "$next_minor"
+printf '  [M] major  -> %s\n' "$next_major"
+printf '  [c] custom\n'
+printf '  [s] skip (default)\n'
+printf 'Tag this commit with a new version? [p/m/M/c/s] '
+read -r answer || answer=s
+
+case "$answer" in
+	p|P) new=$next_patch ;;
+	m) new=$next_minor ;;
+	M) new=$next_major ;;
+	c|C)
+		printf 'New version: '
+		read -r new || new=
+		new=${new#v}
+		if ! is_version "$new"; then
+			echo "post-commit: '$new' is not an X.Y.Z version – skipping." >&2
+			exit 0
+		fi
+		;;
+	*) exit 0 ;;
+esac
+
+if git rev-parse --verify --quiet "refs/tags/v$new" >/dev/null; then
+	echo "post-commit: tag v$new already exists – skipping." >&2
+	exit 0
+fi
+
+# Annotated, so plain `git describe` and `git push --follow-tags` see it too.
+if ! git tag -a "v$new" -m "glinet-cli $new"; then
+	echo "post-commit: could not create tag v$new – tag it yourself." >&2
+	exit 0
+fi
+
+printf 'Tagged v%s. Release it with: git push origin v%s && make publish\n' "$new" "$new"
