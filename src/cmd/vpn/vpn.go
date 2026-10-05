@@ -5,6 +5,7 @@ package vpn
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"slices"
@@ -29,22 +30,36 @@ func init() {
 	})
 }
 
-func parse(args []string) cmd.Action {
-	switch {
-	case len(args) == 0, len(args) == 1 && args[0] == "status":
-		return cmd.WithClient(printTunnels)
-	case len(args) == 2 && (args[0] == "on" || args[0] == "off"):
-		target, enable := args[1], args[0] == "on"
+func parse(fs *flag.FlagSet, args []string) (cmd.Action, error) {
+	a, err := cmd.ParseArgs(fs, args)
+	if err != nil {
+		return nil, err
+	}
+	switch a.Sub {
+	case "", "status":
+		if len(a.Pos) != 0 {
+			return nil, errors.New("vpn status takes no arguments")
+		}
+		return cmd.WithClient(printTunnels), nil
+	case "on", "off":
+		if len(a.Pos) != 1 {
+			return nil, fmt.Errorf("vpn %s needs one tunnel: <id|name|all>", a.Sub)
+		}
+		target := a.Pos[0]
+		enable := a.Sub == "on"
 		return cmd.WithClient(func(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
 			return setTunnels(ctx, c, stdio.Out, target, enable)
-		})
-	case len(args) == 2 && args[0] == "restart":
-		target := args[1]
+		}), nil
+	case "restart":
+		if len(a.Pos) != 1 {
+			return nil, fmt.Errorf("vpn restart needs one tunnel: <id|name|all>")
+		}
+		target := a.Pos[0]
 		return cmd.WithClient(func(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
 			return restartTunnels(ctx, c, stdio.Out, target)
-		})
+		}), nil
 	}
-	return nil
+	return nil, fmt.Errorf("unknown vpn subcommand %q", a.Sub)
 }
 
 func printTunnels(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {

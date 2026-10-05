@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -13,6 +14,8 @@ import (
 	"github.com/rogpeppe/go-internal/testscript"
 	"github.com/zalando/go-keyring"
 
+	"github.com/antavik/glinet-cli/src/cmd"
+	"github.com/antavik/glinet-cli/src/internal/config"
 	"github.com/antavik/glinet-cli/src/internal/glinet/glinettest"
 )
 
@@ -98,7 +101,7 @@ func exits(ts *testscript.TestScript, neg bool, args []string) {
 	}
 }
 
-func TestParseCommand(t *testing.T) {
+func TestParseCommandLine(t *testing.T) {
 	valid := [][]string{
 		{"auth"},
 		{"auth", "login"},
@@ -112,28 +115,57 @@ func TestParseCommand(t *testing.T) {
 		{"vpn", "restart", "2001"},
 		{"vpn", "restart", "Home/WG"},
 		{"web"},
+		// Global flags before the command, after it and after operands.
+		{"-timeout", "5s", "vpn", "on", "all"},
+		{"vpn", "-timeout", "5s", "on", "all"},
+		{"vpn", "on", "all", "-timeout=5s", "-url", "http://x"},
+		{"-version"},
+		{"vpn", "-version"},
 	}
 	for _, args := range valid {
-		if parseCommand(args) == nil {
-			t.Errorf("parseCommand(%q) = nil, want action", args)
+		var cfg config.Config
+		if action, err := parseCommandLine(newFlagSet(&cfg), &cfg, args); action == nil || err != nil {
+			t.Errorf("parseCommandLine(%q) = %v, %v; want action", args, action != nil, err)
 		}
 	}
 
 	invalid := [][]string{
-		nil,
 		{"auth", "whoami"},
+		{"auth", "logout", "extra"},
 		{"reboot"},
 		{"status", "extra"},
 		{"vpn", "on"},
+		{"vpn", "status", "extra"},
 		{"vpn", "toggle", "all"},
 		{"vpn", "on", "a", "b"},
 		{"vpn", "restart"},
 		{"vpn", "restart", "a", "b"},
 		{"web", "extra"},
+		{"vpn", "on", "all", "-bogus"},
+		{"vpn", "-timeout", "0s"},
+		{"-wait", "status"},
 	}
 	for _, args := range invalid {
-		if parseCommand(args) != nil {
-			t.Errorf("parseCommand(%q) = action, want nil", args)
+		var cfg config.Config
+		if action, err := parseCommandLine(newFlagSet(&cfg), &cfg, args); action != nil || err == nil {
+			t.Errorf("parseCommandLine(%q) = action, want error", args)
 		}
+	}
+
+	var cfg config.Config
+	if _, err := parseCommandLine(newFlagSet(&cfg), &cfg, nil); !errors.Is(err, errNoCommand) {
+		t.Errorf("parseCommandLine(nil) error = %v, want errNoCommand", err)
+	}
+	if _, err := parseCommandLine(newFlagSet(&cfg), &cfg, []string{"vpn", "-h"}); !errors.Is(err, flag.ErrHelp) {
+		t.Errorf("parseCommandLine(vpn -h) error = %v, want flag.ErrHelp", err)
+	}
+}
+
+// TestCommandFlags runs every command's Parse on the global flags, so a
+// command flag named like a global one, which makes flag panic, fails here.
+func TestCommandFlags(t *testing.T) {
+	for _, c := range cmd.All() {
+		var cfg config.Config
+		_, _ = parseCommandLine(newFlagSet(&cfg), &cfg, []string{c.Name})
 	}
 }
