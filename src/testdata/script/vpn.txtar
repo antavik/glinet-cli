@@ -40,6 +40,12 @@ stdout '^Travel/WG: restarted$'
 exec glinet-cli vpn
 stdout '^2003  Travel/WG  on       connected$'
 
+# -wait returns once the tunnel reports connected.
+exec glinet-cli vpn restart 2001 -wait
+cmp stdout restart-wait.txt
+exits 2 glinet-cli vpn off 2001 -wait
+stderr '^glinet-cli: -wait works with on and restart only$'
+
 # Unknown target: exit 1, prefixed message on stderr, nothing on stdout.
 exits 1 glinet-cli vpn off nope
 ! stdout .
@@ -65,3 +71,6 @@ Travel/WG: already on
 Home/WG: restarted
 Work/OVPN: restarted
 Travel/WG: restarted
+-- restart-wait.txt --
+Home/WG: restarted
+Home/WG: connected

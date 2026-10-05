@@ -45,14 +45,14 @@ stdout '^glinet-cli dev$'
 Usage: glinet-cli [flags] <command>
 
 Commands:
-  auth [login]                  check password and save it in the OS keychain
-  auth logout                   remove the saved password
-  status                        show router uptime
-  vpn [status]                  list VPN tunnels
-  vpn on <id|name> | -all       turn VPN tunnel(s) on
-  vpn off <id|name> | -all      turn VPN tunnel(s) off
-  vpn restart <id|name> | -all  restart VPN tunnel(s) (off, then on)
-  web                           open the router web interface in browser
+  auth [login]                          check password and save it in the OS keychain
+  auth logout                           remove the saved password
+  status                                show router uptime
+  vpn [status]                          list VPN tunnels
+  vpn on <id|name> | -all [-wait]       turn VPN tunnel(s) on (-wait: until connected)
+  vpn off <id|name> | -all              turn VPN tunnel(s) off
+  vpn restart <id|name> | -all [-wait]  restart VPN tunnel(s), off then on (-wait: until connected)
+  web                                   open the router web interface in browser
 
 Environment:
   GLINET_PASSWORD  router password; overrides the saved one
@@ -66,5 +66,3 @@ Flags:
     	router username (env GLINET_USER) (default "root")
   -version
     	print version and exit
-  -wait
-    	wait for the router to finish async operations

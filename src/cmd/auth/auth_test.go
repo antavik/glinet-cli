@@ -72,9 +72,7 @@ func TestLogin(t *testing.T) {
 	}
 }
 
-// A password manager pipe that never sends a line must not hang the command
-// after Ctrl+C. In the synctest bubble a read that ignored ctx would leave
-// every goroutine blocked, which fails the test at once.
+// Ctrl+C ends a read from a pipe that never sends a line.
 func TestReadPasswordCancelled(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		r, w := io.Pipe()

@@ -34,38 +34,18 @@ type RPCError struct {
 	Message string `json:"message"`
 }
 
-// Task returned by a Handler (as a value or non-nil pointer; a nil *Task is
-// an ordinary null result) makes the router answer the call with an async
-// task handle {"id": N} and serve the "task" polls for it. Polls is the
-// number of complete:false answers before the poll that completes with
-// Result, or Error if set.
-type Task struct {
-	Result any       // final result when the task completes
-	Error  *RPCError // if set, the completed task reports this error
-	Polls  int
-}
-
-// taskEntry is one issued task awaiting its polls.
-type taskEntry struct {
-	remainingPolls int
-	task           Task
-}
-
 // Router mimics firmware 4.9.0: it accepts User and Password and answers
 // "call" requests from handlers keyed by "module.function". Other calls fail
-// with "Method not found". Each login opens a new session with its own ID;
-// calls with an unknown or logged-out session ID fail with "Access denied".
+// with "Method not found". Each login opens a new session; unknown or
+// logged-out sessions get "Access denied".
 type Router struct {
 	URL string
 
 	mu       sync.Mutex
 	sessions map[string]bool // session ID -> still active
-	tasks    map[int]*taskEntry
-	nextID   int
 }
 
-// LoggedOut reports whether a client logged in and every session opened
-// since has been logged out.
+// LoggedOut reports whether every opened session has logged out.
 func (r *Router) LoggedOut() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -105,20 +85,10 @@ func (r *Router) active(sid string) bool {
 	return r.sessions[sid]
 }
 
-// registerTask issues the next sequential id for t and remembers it.
-func (r *Router) registerTask(t Task) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.nextID++
-	id := r.nextID
-	r.tasks[id] = &taskEntry{remainingPolls: t.Polls, task: t}
-	return id
-}
-
 // NewRouter starts a fake router that stops when the test ends.
 func NewRouter(t testing.TB, calls map[string]Handler) *Router {
 	t.Helper()
-	router := &Router{sessions: map[string]bool{}, tasks: map[int]*taskEntry{}}
+	router := &Router{sessions: map[string]bool{}}
 	decode := func(data json.RawMessage, v any) {
 		if err := json.Unmarshal(data, v); err != nil {
 			t.Errorf("decode params: %v", err)
@@ -187,46 +157,7 @@ func NewRouter(t testing.TB, calls map[string]Handler) *Router {
 					if e != nil {
 						rpcErr, result = e, nil
 					}
-				case Task:
-					result = map[string]any{"id": router.registerTask(e)}
-				case *Task:
-					if e != nil {
-						result = map[string]any{"id": router.registerTask(*e)}
-					}
 				}
-			}
-		case "task":
-			var p struct {
-				ID int `json:"id"`
-			}
-			decode(req.Params, &p)
-			var entry *taskEntry
-			pending := false
-			router.mu.Lock()
-			if e, ok := router.tasks[p.ID]; ok {
-				if e.remainingPolls > 0 {
-					e.remainingPolls--
-					pending = true
-				} else {
-					entry = e
-				}
-			}
-			router.mu.Unlock()
-			switch {
-			case pending:
-				result = map[string]any{"complete": false}
-			case entry == nil:
-				rpcErr = &RPCError{Code: -32000, Message: "Task not found"}
-			case entry.task.Error != nil:
-				result = map[string]any{
-					"complete": true,
-					"error": map[string]any{
-						"code":    entry.task.Error.Code,
-						"message": entry.task.Error.Message,
-					},
-				}
-			default:
-				result = map[string]any{"complete": true, "result": entry.task.Result}
 			}
 		default:
 			rpcErr = &RPCError{Code: -32601, Message: "Method not found"}

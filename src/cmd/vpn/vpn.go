@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/antavik/glinet-cli/src/cmd"
 	"github.com/antavik/glinet-cli/src/internal/glinet"
@@ -22,9 +23,9 @@ func init() {
 		Name: "vpn",
 		Usage: []string{
 			"vpn [status]\tlist VPN tunnels",
-			"vpn on <id|name> | -all\tturn VPN tunnel(s) on",
+			"vpn on <id|name> | -all [-wait]\tturn VPN tunnel(s) on (-wait: until connected)",
 			"vpn off <id|name> | -all\tturn VPN tunnel(s) off",
-			"vpn restart <id|name> | -all\trestart VPN tunnel(s) (off, then on)",
+			"vpn restart <id|name> | -all [-wait]\trestart VPN tunnel(s), off then on (-wait: until connected)",
 		},
 		Parse: parse,
 	})
@@ -32,13 +33,14 @@ func init() {
 
 func parse(fs *flag.FlagSet, args []string) (cmd.Action, error) {
 	all := fs.Bool("all", false, "target every tunnel")
+	wait := fs.Bool("wait", false, "after on or restart, wait until the tunnel is connected")
 	a, err := cmd.ParseArgs(fs, args)
 	if err != nil {
 		return nil, err
 	}
 	switch a.Sub {
 	case "", "status":
-		if len(a.Pos) != 0 || *all {
+		if len(a.Pos) != 0 || *all || *wait {
 			return nil, errors.New("vpn status takes no arguments")
 		}
 		return cmd.WithClient(printTunnels), nil
@@ -47,21 +49,23 @@ func parse(fs *flag.FlagSet, args []string) (cmd.Action, error) {
 		if err != nil {
 			return nil, err
 		}
+		if *wait && a.Sub == "off" {
+			return nil, errors.New("-wait works with on and restart only")
+		}
 		if a.Sub == "restart" {
 			return cmd.WithClient(func(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
-				return restartTunnels(ctx, c, stdio.Out, target, *all)
+				return restartTunnels(ctx, c, stdio.Out, target, *all, *wait)
 			}), nil
 		}
 		enable := a.Sub == "on"
 		return cmd.WithClient(func(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
-			return setTunnels(ctx, c, stdio.Out, target, *all, enable)
+			return setTunnels(ctx, c, stdio.Out, target, *all, enable, *wait)
 		}), nil
 	}
 	return nil, fmt.Errorf("unknown vpn subcommand %q", a.Sub)
 }
 
-// setTarget checks the target of "on", "off" or "restart": one positional
-// tunnel ID or name, or -all for every tunnel, but not both.
+// setTarget returns the one tunnel ID or name, or "" with -all.
 func setTarget(pos []string, all bool) (string, error) {
 	switch {
 	case all && len(pos) == 0:
@@ -90,10 +94,10 @@ func printTunnels(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
 	return w.Flush()
 }
 
-// setTunnels turns the tunnels matching target on or off, or every tunnel
-// when all is set, skipping those already in that state. It keeps going after
-// a failure and reports all errors, and stops early once ctx is cancelled.
-func setTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target string, all, enable bool) error {
+// setTunnels turns matching tunnels on or off, skipping those already there.
+// With wait, it waits for each enabled tunnel to connect. It reports all
+// errors and stops once ctx ends.
+func setTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target string, all, enable, wait bool) error {
 	tunnels, err := c.Tunnels(ctx)
 	if err != nil {
 		return err
@@ -111,29 +115,34 @@ func setTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target strin
 	for _, t := range selected {
 		if t.Enabled == enable {
 			fmt.Fprintf(w, "%s: already %s\n", t.Name, onOff(enable))
-			continue
+		} else {
+			// Report cancellation once, not per remaining tunnel.
+			if err := ctx.Err(); err != nil {
+				errs = append(errs, err)
+				break
+			}
+			if err := c.SetTunnel(ctx, t.ID, enable); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", t.Name, err))
+				continue
+			}
+			fmt.Fprintf(w, "%s: %s\n", t.Name, onOff(enable))
 		}
-		// As in restartTunnels: after Ctrl+C or the timeout, report the
-		// cancellation once instead of one failure per remaining tunnel.
-		if err := ctx.Err(); err != nil {
-			errs = append(errs, err)
-			break
+		if wait && enable {
+			if err := waitConnected(ctx, c, w, t); err != nil {
+				errs = append(errs, err)
+				if ctx.Err() != nil {
+					break // ctx ended: skip remaining waits
+				}
+			}
 		}
-		if err := c.SetTunnel(ctx, t.ID, enable); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", t.Name, err))
-			continue
-		}
-		fmt.Fprintf(w, "%s: %s\n", t.Name, onOff(enable))
 	}
 	return errors.Join(errs...)
 }
 
-// restartTunnels turns each tunnel matching target off, then on, one tunnel at
-// a time, or every tunnel when all is set, ignoring the current state, so a
-// disabled tunnel ends up enabled. A tunnel whose off fails is not turned on.
-// It keeps going after a failure and reports all errors, and stops early once
-// ctx is cancelled.
-func restartTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target string, all bool) error {
+// restartTunnels turns matching tunnels off, then on, one at a time, whatever
+// their state. A tunnel whose off fails is not turned on. With wait, it waits
+// for each to connect. It reports all errors and stops once ctx ends.
+func restartTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target string, all, wait bool) error {
 	tunnels, err := c.Tunnels(ctx)
 	if err != nil {
 		return err
@@ -164,14 +173,50 @@ func restartTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target s
 			continue
 		}
 		fmt.Fprintf(w, "%s: restarted\n", t.Name)
+		if wait {
+			if err := waitConnected(ctx, c, w, t); err != nil {
+				errs = append(errs, err)
+				if ctx.Err() != nil {
+					break // ctx ended: skip remaining waits
+				}
+			}
+		}
 	}
 	return errors.Join(errs...)
 }
 
-// selectTunnels returns every tunnel when all is set, otherwise the one
-// tunnel whose ID or name (case-insensitive) equals target. IDs are unique, so
-// an ID match wins over a tunnel named like another tunnel's ID. A tunnel
-// named "all" matches by name like any other.
+// pollInterval is the delay between waitConnected status checks.
+var pollInterval = time.Second
+
+// statusConnected is the get_status code for connected (0 not started,
+// 2 connecting).
+const statusConnected = 1
+
+// waitConnected polls get_status until t is connected or ctx ends.
+func waitConnected(ctx context.Context, c *glinet.Client, w io.Writer, t glinet.Tunnel) error {
+	for {
+		tunnels, err := c.Tunnels(ctx)
+		if err != nil {
+			return fmt.Errorf("%s: %w", t.Name, err)
+		}
+		i := slices.IndexFunc(tunnels, func(u glinet.Tunnel) bool { return u.ID == t.ID })
+		if i < 0 {
+			return fmt.Errorf("%s: tunnel disappeared", t.Name)
+		}
+		if tunnels[i].Status == statusConnected {
+			fmt.Fprintf(w, "%s: connected\n", t.Name)
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%s: not connected: %w", t.Name, ctx.Err())
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
+// selectTunnels returns every tunnel with all, else the one whose ID or name
+// (case-insensitive) is target. An ID match wins over a name match.
 func selectTunnels(tunnels []glinet.Tunnel, target string, all bool) ([]glinet.Tunnel, error) {
 	if all {
 		return tunnels, nil
@@ -204,7 +249,7 @@ func statusText(t glinet.Tunnel) string {
 	switch t.Status {
 	case 0:
 		return "disconnected"
-	case 1:
+	case statusConnected:
 		return "connected"
 	case 2:
 		return "connecting"

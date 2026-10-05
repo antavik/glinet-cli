@@ -49,10 +49,8 @@ func main() {
 	}
 }
 
-// newFlagSet defines the global flags, filling cfg. A flag set of its own,
-// not flag.CommandLine, keeps flags other packages register (such as the test
-// binary's) out of the help. It prints nothing itself: main reports parse
-// errors and help once, with printUsage.
+// newFlagSet defines the global flags into cfg. Its own set keeps other
+// packages' flags out of the help; it prints nothing itself.
 func newFlagSet(cfg *config.Config) *flag.FlagSet {
 	fs := flag.NewFlagSet("glinet-cli", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -60,13 +58,11 @@ func newFlagSet(cfg *config.Config) *flag.FlagSet {
 	return fs
 }
 
-// errNoCommand reports a command line without a command. main answers it
-// with the help alone.
+// errNoCommand means no command was given; main prints the help.
 var errNoCommand = errors.New("no command")
 
-// parseCommandLine reads the global flags, the command name, then the
-// command's arguments, among which global flags are accepted too. It returns
-// flag.ErrHelp for -h. Any other error means bad usage.
+// parseCommandLine parses global flags, the command and its arguments.
+// It returns flag.ErrHelp for -h; any other error means bad usage.
 func parseCommandLine(fs *flag.FlagSet, cfg *config.Config, argv []string) (cmd.Action, error) {
 	showVersion := fs.Bool("version", false, "print version and exit")
 	if err := fs.Parse(argv); err != nil {

@@ -65,7 +65,7 @@ func login(ctx context.Context, cfg config.Config, stdio cmd.IO) error {
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
 
-	client := glinet.NewClient(cfg.URL, false)
+	client := glinet.NewClient(cfg.URL)
 	if err := client.Login(ctx, cfg.User, password); err != nil {
 		return err
 	}
@@ -92,10 +92,8 @@ func logout(_ context.Context, cfg config.Config, stdio cmd.IO) error {
 	return nil
 }
 
-// readPassword reads one line from stdio.In. On a terminal it prompts on
-// stdio.Err and hides input; piped input lets a password manager feed it.
-// Either way Ctrl+C or SIGTERM ends the wait: main catches them, so a read
-// that ignored ctx would leave the process hanging on a pipe that never closes.
+// readPassword reads one line from stdio.In, prompting with hidden input on a
+// terminal. It returns when ctx ends, so a silent pipe cannot hang the process.
 func readPassword(ctx context.Context, stdio cmd.IO, prompt string) (string, error) {
 	read := func() (string, error) {
 		line, err := bufio.NewReader(stdio.In).ReadString('\n')

@@ -21,45 +21,60 @@ type SetCall struct {
 }
 
 // VPN is a stateful vpn-client module: set_tunnel changes what get_status
-// reports, so a test can turn a tunnel off and then list it. Enabling a
-// tunnel marks it connected, disabling it disconnected. It is safe for
-// concurrent use.
+// reports. Enabled tunnels connect at once unless ConnectAfter is set. Safe
+// for concurrent use.
 type VPN struct {
-	mu      sync.Mutex
-	tunnels []Tunnel
-	calls   []SetCall
-	fail    func(SetCall) *RPCError
+	mu           sync.Mutex
+	tunnels      []Tunnel
+	calls        []SetCall
+	fail         func(SetCall) *RPCError
+	connectPolls int
+	connecting   map[int]int // tunnel ID -> get_status calls left before connected
 }
 
-// NewVPN returns a vpn-client module holding tunnels. Pass its Handlers to
-// NewRouter.
+// NewVPN returns a vpn-client module holding tunnels.
 func NewVPN(tunnels ...Tunnel) *VPN {
 	return &VPN{tunnels: slices.Clone(tunnels)}
 }
 
-// FailWith makes set_tunnel answer with the error fail returns for a call, if
-// not nil, and leave the tunnel unchanged. The call is still recorded.
+// FailWith makes set_tunnel return fail's non-nil error, leaving the tunnel
+// unchanged. The call is still recorded.
 func (v *VPN) FailWith(fail func(SetCall) *RPCError) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.fail = fail
 }
 
-// Calls returns every set_tunnel request so far, in order, failed ones too.
+// ConnectAfter makes newly enabled tunnels report connecting for n
+// get_status calls.
+func (v *VPN) ConnectAfter(n int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.connectPolls = n
+}
+
+// Calls returns every set_tunnel request so far, failed ones too.
 func (v *VPN) Calls() []SetCall {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return slices.Clone(v.calls)
 }
 
-// Handlers returns the vpn-client.get_status and vpn-client.set_tunnel
-// handlers. Merge them with others into the map passed to NewRouter.
+// Handlers returns the get_status and set_tunnel handlers for NewRouter.
 func (v *VPN) Handlers() map[string]Handler {
 	return map[string]Handler{
 		"vpn-client.get_status": func(json.RawMessage) any {
 			v.mu.Lock()
 			defer v.mu.Unlock()
-			return map[string]any{"status_list": slices.Clone(v.tunnels)}
+			list := slices.Clone(v.tunnels)
+			for i, t := range v.tunnels {
+				if n, ok := v.connecting[t.ID]; ok && t.Status == 2 {
+					if v.connecting[t.ID] = n - 1; n <= 1 {
+						v.tunnels[i].Status = 1
+					}
+				}
+			}
+			return map[string]any{"status_list": list}
 		},
 		"vpn-client.set_tunnel": func(args json.RawMessage) any {
 			var a struct {
@@ -85,7 +100,14 @@ func (v *VPN) Handlers() map[string]Handler {
 			}
 			v.tunnels[i].Enabled = a.Enabled
 			v.tunnels[i].Status = 0
-			if a.Enabled {
+			switch {
+			case a.Enabled && v.connectPolls > 0:
+				v.tunnels[i].Status = 2
+				if v.connecting == nil {
+					v.connecting = map[int]int{}
+				}
+				v.connecting[a.TunnelID] = v.connectPolls
+			case a.Enabled:
 				v.tunnels[i].Status = 1
 			}
 			return map[string]any{"tunnel_id": a.TunnelID}

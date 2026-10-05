@@ -22,11 +22,8 @@ type Command struct {
 	// Usage has one help line per form of the command: the synopsis, a tab,
 	// then a summary, e.g. "vpn [status]\tlist VPN tunnels".
 	Usage []string
-	// Parse returns the action for args, the arguments after Name. fs holds
-	// the global flags; Parse defines the command's own flags on it, if any,
-	// then reads args with ParseArgs, so global flags work after the command
-	// too. It only looks at args, so any error it returns means bad usage and
-	// fails before a password prompt or router request.
+	// Parse returns the action for args after Name. It adds its own flags to
+	// fs, which holds the global ones. Any error means bad usage.
 	Parse func(fs *flag.FlagSet, args []string) (Action, error)
 }
 
@@ -82,7 +79,7 @@ func WithClient(fn func(context.Context, *glinet.Client, IO) error) Action {
 
 		ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 		defer cancel()
-		client := glinet.NewClient(cfg.URL, cfg.Wait)
+		client := glinet.NewClient(cfg.URL)
 		if err := client.Login(ctx, cfg.User, password); err != nil {
 			return err
 		}
