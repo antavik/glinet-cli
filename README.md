@@ -73,6 +73,7 @@ without a prompt.
 | Username | `-user`    | `GLINET_USER`     | `root`               |
 | Password | –          | `GLINET_PASSWORD` | OS keychain          |
 | Timeout  | `-timeout` | –                 | 30 seconds           |
+| Wait     | `-wait`    | –                 | off                  |
 
 There is no password flag, so the password never shows up in `ps` output or
 shell history.
@@ -117,6 +118,12 @@ The router exposes JSON-RPC 2.0 at `POST /rpc`:
 4. Everything else is `call` with `[sid, module, function, args]`:
    `system.get_status`, `vpn-client.get_status`, `vpn-client.set_tunnel`.
 5. `logout` ends the session when the command is done.
+
+Some operations, like `vpn on`, are asynchronous: the router answers with a
+task id and runs the operation in the background. With `-wait` the client
+polls the router's `task` method until the operation completes, bounded by
+`-timeout`; without it the command returns as soon as the router accepts the
+request.
 
 The password itself never goes over the wire, but the session ID does, in
 plain HTTP, and anyone who records the challenge and login hash can guess
@@ -181,7 +188,7 @@ tag onto the new one.
   login; every other file covers one router API module (`system.go`,
   `vpnclient.go`).
 - `src/internal/glinet/glinettest/`: fake router for tests.
-- `src/internal/config/`: global flags (`-url`, `-user`, `-timeout`).
+- `src/internal/config/`: global flags (`-url`, `-user`, `-timeout`, `-wait`).
 - `src/internal/keychain/`: the saved password, or `GLINET_PASSWORD`.
 
 ### Add a command

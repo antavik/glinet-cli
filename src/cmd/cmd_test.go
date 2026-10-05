@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"testing"
@@ -27,6 +28,36 @@ func TestWithClientLogsOutAfterCancel(t *testing.T) {
 	}
 	if !router.LoggedOut() {
 		t.Error("WithClient() did not log out after the command was cancelled")
+	}
+}
+
+// TestWithClientWaits proves cfg.Wait reaches the client end to end: an
+// async handler's final result only appears in the command's answer when the
+// client polls, which happens only if Wait propagated.
+func TestWithClientWaits(t *testing.T) {
+	t.Setenv("GLINET_PASSWORD", glinettest.Password)
+	router := glinettest.NewRouter(t, map[string]glinettest.Handler{
+		"vpn-client.get_status": func(json.RawMessage) any {
+			return glinettest.Task{
+				Result: map[string]any{"status_list": []any{map[string]any{
+					"tunnel_id": 1, "name": "wg", "enabled": true, "status": 1,
+				}}},
+			}
+		},
+	})
+	cfg := config.Config{URL: router.URL, User: glinettest.User, Timeout: time.Minute, Wait: true}
+
+	var tunnels []glinet.Tunnel
+	err := WithClient(func(ctx context.Context, c *glinet.Client) error {
+		var err error
+		tunnels, err = c.Tunnels(ctx)
+		return err
+	})(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("WithClient() error = %v", err)
+	}
+	if len(tunnels) != 1 || tunnels[0].Name != "wg" {
+		t.Fatalf("Tunnels() = %+v, want one tunnel named %q (wait must have polled the task)", tunnels, "wg")
 	}
 }
 

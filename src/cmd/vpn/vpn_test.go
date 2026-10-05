@@ -111,7 +111,7 @@ func restartFixture(t *testing.T, fail func(setCall) *glinettest.RPCError) (*gli
 		},
 	})
 
-	c := glinet.NewClient(router.URL)
+	c := glinet.NewClient(router.URL, false)
 	if err := c.Login(context.Background(), glinettest.User, glinettest.Password); err != nil {
 		t.Fatal(err)
 	}

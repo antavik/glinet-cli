@@ -70,7 +70,7 @@ func WithClient(fn func(context.Context, *glinet.Client) error) Action {
 
 		ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 		defer cancel()
-		client := glinet.NewClient(cfg.URL)
+		client := glinet.NewClient(cfg.URL, cfg.Wait)
 		if err := client.Login(ctx, cfg.User, password); err != nil {
 			return err
 		}
