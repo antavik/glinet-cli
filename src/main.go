@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -27,22 +28,18 @@ var version = "dev"
 
 func main() {
 	var cfg config.Config
-	fs, showVersion := newFlagSet(&cfg)
-	_ = fs.Parse(os.Args[1:]) // ExitOnError: a bad flag exits with code 2.
-
-	if *showVersion {
-		fmt.Println("glinet-cli", version)
+	fs := newFlagSet(&cfg)
+	action, err := parseCommandLine(fs, &cfg, os.Args[1:])
+	switch {
+	case errors.Is(err, flag.ErrHelp):
+		printUsage(os.Stderr, fs)
 		return
-	}
-
-	if cfg.Timeout <= 0 {
-		fmt.Fprintln(os.Stderr, "glinet-cli: -timeout must be positive")
+	case errors.Is(err, errNoCommand):
+		printUsage(os.Stderr, fs)
 		os.Exit(2)
-	}
-
-	action := parseCommand(fs.Args())
-	if action == nil {
-		fs.Usage()
+	case err != nil:
+		fmt.Fprintln(os.Stderr, "glinet-cli:", err)
+		printUsage(os.Stderr, fs)
 		os.Exit(2)
 	}
 
@@ -52,31 +49,55 @@ func main() {
 	}
 }
 
-// newFlagSet defines the global flags, filling cfg, plus -version. Its Usage
-// prints the whole help. A flag set of its own, not flag.CommandLine, keeps
-// flags other packages register (such as the test binary's) out of the help.
-func newFlagSet(cfg *config.Config) (*flag.FlagSet, *bool) {
-	fs := flag.NewFlagSet("glinet-cli", flag.ExitOnError)
+// newFlagSet defines the global flags, filling cfg. A flag set of its own,
+// not flag.CommandLine, keeps flags other packages register (such as the test
+// binary's) out of the help. It prints nothing itself: main reports parse
+// errors and help once, with printUsage.
+func newFlagSet(cfg *config.Config) *flag.FlagSet {
+	fs := flag.NewFlagSet("glinet-cli", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	cfg.RegisterFlags(fs)
-
-	showVersion := fs.Bool("version", false, "print version and exit")
-	fs.Usage = func() {
-		printUsage(fs.Output())
-		fs.PrintDefaults()
-	}
-	return fs, showVersion
+	return fs
 }
 
-// parseCommand maps command-line arguments to an action, or nil if they are invalid.
-func parseCommand(args []string) cmd.Action {
-	if len(args) == 0 {
-		return nil
+// errNoCommand reports a command line without a command. main answers it
+// with the help alone.
+var errNoCommand = errors.New("no command")
+
+// parseCommandLine reads the global flags, the command name, then the
+// command's arguments, among which global flags are accepted too. It returns
+// flag.ErrHelp for -h. Any other error means bad usage.
+func parseCommandLine(fs *flag.FlagSet, cfg *config.Config, argv []string) (cmd.Action, error) {
+	showVersion := fs.Bool("version", false, "print version and exit")
+	if err := fs.Parse(argv); err != nil {
+		return nil, err
 	}
-	c, ok := cmd.Lookup(args[0])
+	if *showVersion {
+		return printVersion, nil
+	}
+	if fs.NArg() == 0 {
+		return nil, errNoCommand
+	}
+	c, ok := cmd.Lookup(fs.Arg(0))
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("unknown command %q", fs.Arg(0))
 	}
-	return c.Parse(args[1:])
+	action, err := c.Parse(fs, fs.Args()[1:])
+	if err != nil {
+		return nil, err
+	}
+	if *showVersion { // "vpn -version"
+		return printVersion, nil
+	}
+	if cfg.Timeout <= 0 {
+		return nil, errors.New("-timeout must be positive")
+	}
+	return action, nil
+}
+
+func printVersion(_ context.Context, _ config.Config, stdio cmd.IO) error {
+	_, err := fmt.Fprintln(stdio.Out, "glinet-cli", version)
+	return err
 }
 
 func run(cfg config.Config, action cmd.Action) error {
@@ -85,8 +106,7 @@ func run(cfg config.Config, action cmd.Action) error {
 	return action(ctx, cfg, cmd.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
 }
 
-// printUsage writes the help text up to the flag list.
-func printUsage(w io.Writer) {
+func printUsage(w io.Writer, fs *flag.FlagSet) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprint(tw, "Usage: glinet-cli [flags] <command>\n\nCommands:\n")
 	for _, c := range cmd.All() {
@@ -96,4 +116,6 @@ func printUsage(w io.Writer) {
 	}
 	fmt.Fprint(tw, "\nEnvironment:\n  GLINET_PASSWORD\trouter password; overrides the saved one\n\nFlags:\n")
 	_ = tw.Flush() // Nowhere to report a failed write of the help text.
+	fs.SetOutput(w)
+	fs.PrintDefaults()
 }

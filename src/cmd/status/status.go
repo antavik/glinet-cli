@@ -3,6 +3,8 @@ package status
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"time"
 
@@ -18,11 +20,15 @@ func init() {
 	})
 }
 
-func parse(args []string) cmd.Action {
-	if len(args) != 0 {
-		return nil
+func parse(fs *flag.FlagSet, args []string) (cmd.Action, error) {
+	a, err := cmd.ParseArgs(fs, args)
+	if err != nil {
+		return nil, err
 	}
-	return cmd.WithClient(printUptime)
+	if a.Sub != "" {
+		return nil, errors.New("status takes no arguments")
+	}
+	return cmd.WithClient(printUptime), nil
 }
 
 func printUptime(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {

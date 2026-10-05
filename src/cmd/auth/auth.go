@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -30,14 +31,24 @@ func init() {
 	})
 }
 
-func parse(args []string) cmd.Action {
-	switch {
-	case len(args) == 0, len(args) == 1 && args[0] == "login":
-		return login
-	case len(args) == 1 && args[0] == "logout":
-		return logout
+func parse(fs *flag.FlagSet, args []string) (cmd.Action, error) {
+	a, err := cmd.ParseArgs(fs, args)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	var action cmd.Action
+	switch a.Sub {
+	case "", "login":
+		action = login
+	case "logout":
+		action = logout
+	default:
+		return nil, fmt.Errorf("unknown auth subcommand %q", a.Sub)
+	}
+	if len(a.Pos) != 0 {
+		return nil, fmt.Errorf("auth %s takes no arguments", a.Sub)
+	}
+	return action, nil
 }
 
 // login asks for the password, checks it with the router and saves it in

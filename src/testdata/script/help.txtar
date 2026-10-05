@@ -14,28 +14,33 @@ cmp stderr usage.txt
 exits 0 glinet-cli -h
 cmp stderr usage.txt
 
-# Unknown command: help, exit 2. TestParseCommand covers which arguments
-# each command takes.
+# Usage errors: the cause, then the help, exit 2. TestParseCommandLine
+# covers which arguments each command takes.
 exits 2 glinet-cli reboot
+stderr '^glinet-cli: unknown command "reboot"$'
 stderr '^Usage: glinet-cli \[flags\] <command>$'
-
-# Global flags go before the command; after it they are arguments.
-exits 2 glinet-cli vpn -url http://x
-stderr '^Usage:'
+exits 2 glinet-cli vpn on
+stderr '^glinet-cli: vpn on needs one tunnel: <id\|name\|all>$'
 
 # Flag errors.
 exits 2 glinet-cli -timeout 0 status
-cmp stderr timeout.txt
+stderr '^glinet-cli: -timeout must be positive$'
 exits 2 glinet-cli -bogus
-stderr '^flag provided but not defined: -bogus$'
+stderr '^glinet-cli: flag provided but not defined: -bogus$'
+
+# Global flags also work after the command and its operands.
+exits 2 glinet-cli status -timeout 0
+stderr '^glinet-cli: -timeout must be positive$'
+exits 2 glinet-cli vpn on all -bogus
+stderr '^glinet-cli: flag provided but not defined: -bogus$'
 
 # Version.
 exec glinet-cli -version
 stdout '^glinet-cli dev$'
 ! stderr .
+exec glinet-cli vpn -version
+stdout '^glinet-cli dev$'
 
--- timeout.txt --
-glinet-cli: -timeout must be positive
 -- usage.txt --
 Usage: glinet-cli [flags] <command>
 

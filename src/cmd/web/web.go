@@ -4,6 +4,8 @@ package web
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"net/url"
 	"os/exec"
@@ -21,11 +23,15 @@ func init() {
 	})
 }
 
-func parse(args []string) cmd.Action {
-	if len(args) != 0 {
-		return nil
+func parse(fs *flag.FlagSet, args []string) (cmd.Action, error) {
+	a, err := cmd.ParseArgs(fs, args)
+	if err != nil {
+		return nil, err
 	}
-	return open
+	if a.Sub != "" {
+		return nil, errors.New("web takes no arguments")
+	}
+	return open, nil
 }
 
 func open(ctx context.Context, cfg config.Config, _ cmd.IO) error {
