@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -30,14 +31,24 @@ func init() {
 	})
 }
 
-func parse(args []string) cmd.Action {
-	switch {
-	case len(args) == 0, len(args) == 1 && args[0] == "login":
-		return login
-	case len(args) == 1 && args[0] == "logout":
-		return logout
+func parse(fs *flag.FlagSet, args []string) (cmd.Action, error) {
+	a, err := cmd.ParseArgs(fs, args)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	var action cmd.Action
+	switch a.Sub {
+	case "", "login":
+		action = login
+	case "logout":
+		action = logout
+	default:
+		return nil, fmt.Errorf("unknown auth subcommand %q", a.Sub)
+	}
+	if len(a.Pos) != 0 {
+		return nil, fmt.Errorf("auth %s takes no arguments", a.Sub)
+	}
+	return action, nil
 }
 
 // login asks for the password, checks it with the router and saves it in
@@ -81,10 +92,8 @@ func logout(_ context.Context, cfg config.Config, stdio cmd.IO) error {
 	return nil
 }
 
-// readPassword reads one line from stdio.In. On a terminal it prompts on
-// stdio.Err and hides input; piped input lets a password manager feed it.
-// Either way Ctrl+C or SIGTERM ends the wait: main catches them, so a read
-// that ignored ctx would leave the process hanging on a pipe that never closes.
+// readPassword reads one line from stdio.In, prompting with hidden input on a
+// terminal. It returns when ctx ends, so a silent pipe cannot hang the process.
 func readPassword(ctx context.Context, stdio cmd.IO, prompt string) (string, error) {
 	read := func() (string, error) {
 		line, err := bufio.NewReader(stdio.In).ReadString('\n')

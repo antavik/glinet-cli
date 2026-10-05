@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"flag"
 	"slices"
 	"testing"
 	"time"
@@ -56,7 +57,7 @@ func TestRegister(t *testing.T) {
 	registry = map[string]Command{}
 	t.Cleanup(func() { registry = saved })
 
-	parse := func([]string) Action { return nil }
+	parse := func(*flag.FlagSet, []string) (Action, error) { return nil, nil }
 	Register(Command{Name: "vpn", Parse: parse})
 	Register(Command{Name: "auth", Parse: parse})
 

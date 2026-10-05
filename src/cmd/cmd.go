@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"context"
+	"flag"
 	"io"
 	"maps"
 	"slices"
@@ -21,10 +22,9 @@ type Command struct {
 	// Usage has one help line per form of the command: the synopsis, a tab,
 	// then a summary, e.g. "vpn [status]\tlist VPN tunnels".
 	Usage []string
-	// Parse returns the action for args, the arguments after Name, or nil if
-	// it does not accept them. It only looks at args, so invalid arguments
-	// fail before any password prompt or router request.
-	Parse func(args []string) Action
+	// Parse returns the action for args after Name. It adds its own flags to
+	// fs, which holds the global ones. Any error means bad usage.
+	Parse func(fs *flag.FlagSet, args []string) (Action, error)
 }
 
 // registry holds the registered commands by name. Only init functions write

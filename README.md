@@ -90,19 +90,27 @@ ID    NAME            ENABLED  STATUS
 
 $ glinet-cli vpn on 2002          # by tunnel ID
 $ glinet-cli vpn off "Proton/nl-free"  # by name, case-insensitive
-$ glinet-cli vpn off all
+$ glinet-cli vpn off -all
 $ glinet-cli vpn restart 2001     # turn off, then on
-$ glinet-cli vpn restart all
+$ glinet-cli vpn restart -all
+$ glinet-cli vpn on 2002 -wait     # return once the tunnel is connected
+$ glinet-cli vpn restart -all -wait -timeout 2m
 
 $ glinet-cli web                  # open the router web UI in the default browser
 ```
 
 `on` and `off` leave tunnels already in the requested state alone. `restart`
 cycles each tunnel off, then on, one at a time, regardless of its current
-state, so `restart all` leaves every tunnel on, including ones that were off.
-With `all`, a failure on one tunnel does not stop the others; the command exits
+state, so `restart -all` leaves every tunnel on, including ones that were off.
+With `-all`, a failure on one tunnel does not stop the others; the command exits
 non-zero and lists every error. If a tunnel fails to turn off, it is not turned
 on.
+
+With `-wait`, `on` and `restart` poll `vpn-client.get_status` every second
+until each tunnel reports connected (status `1`), one tunnel at a time,
+including tunnels that were already on. `-timeout` bounds the whole command,
+so raise it for slow tunnels; a tunnel still connecting when it expires fails
+the command.
 
 ## How it works
 
@@ -117,6 +125,10 @@ The router exposes JSON-RPC 2.0 at `POST /rpc`:
 4. Everything else is `call` with `[sid, module, function, args]`:
    `system.get_status`, `vpn-client.get_status`, `vpn-client.set_tunnel`.
 5. `logout` ends the session when the command is done.
+
+`set_tunnel` returns as soon as the router accepts the change; the tunnel
+then connects in the background. `get_status` reports each tunnel's `status`:
+`0` not started, `1` connected, `2` connecting.
 
 The password itself never goes over the wire, but the session ID does, in
 plain HTTP, and anyone who records the challenge and login hash can guess
@@ -134,7 +146,11 @@ checked against a router on firmware 4.9.0:
 
 - [GL.iNet SDK 4.x API docs](https://dev.gl-inet.com/router-4.x-api/):
   the official reference for `challenge`, `login`, `logout` and `call`, and
-  the 5-minute idle session timeout. The site is not always publicly reachable.
+  the 5-minute idle session timeout, and the VPN status codes (`0` not
+  started, `1` connected, `2` connecting) of `wg-client` and `ovpn-client`.
+  The site is offline since January 2024; an
+  [archived copy](https://web.archive.org/web/20240121142533/https://dev.gl-inet.com/router-4.x-api/)
+  remains. It predates the 4.8 `vpn-client` module.
 - [gli4py](https://github.com/HarvsG/gli4py): Python client whose code and
   mock fixtures show the `vpn-client` module (`get_status`, `set_tunnel`) and
   the tunnel status codes.

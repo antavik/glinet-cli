@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
+	"io"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/antavik/glinet-cli/src/cmd"
+	"github.com/antavik/glinet-cli/src/internal/config"
 	"github.com/antavik/glinet-cli/src/internal/glinet"
 	"github.com/antavik/glinet-cli/src/internal/glinet/glinettest"
 )
@@ -17,26 +22,30 @@ func TestSelectTunnels(t *testing.T) {
 	work := glinet.Tunnel{ID: 2002, Name: "Work/OVPN"}
 	dup := glinet.Tunnel{ID: 2003, Name: "home/wg"}
 	numeric := glinet.Tunnel{ID: 2004, Name: "2001"}
+	all := glinet.Tunnel{ID: 2005, Name: "all"}
 
 	tests := []struct {
 		name    string
 		tunnels []glinet.Tunnel
 		target  string
+		all     bool
 		want    []glinet.Tunnel
 		wantErr bool
 	}{
-		{"all", []glinet.Tunnel{home, work}, "all", []glinet.Tunnel{home, work}, false},
-		{"by id", []glinet.Tunnel{home, work}, "2002", []glinet.Tunnel{work}, false},
-		{"by name ignoring case", []glinet.Tunnel{home, work}, "work/ovpn", []glinet.Tunnel{work}, false},
-		{"no match", []glinet.Tunnel{home, work}, "nope", nil, true},
-		{"ambiguous name", []glinet.Tunnel{home, dup}, "Home/WG", nil, true},
-		{"id of duplicate name", []glinet.Tunnel{home, dup}, "2003", []glinet.Tunnel{dup}, false},
-		{"id wins over numeric name", []glinet.Tunnel{home, numeric}, "2001", []glinet.Tunnel{home}, false},
-		{"numeric name", []glinet.Tunnel{work, numeric}, "2001", []glinet.Tunnel{numeric}, false},
+		{"all", []glinet.Tunnel{home, work}, "", true, []glinet.Tunnel{home, work}, false},
+		{"by id", []glinet.Tunnel{home, work}, "2002", false, []glinet.Tunnel{work}, false},
+		{"by name ignoring case", []glinet.Tunnel{home, work}, "work/ovpn", false, []glinet.Tunnel{work}, false},
+		{"no match", []glinet.Tunnel{home, work}, "nope", false, nil, true},
+		{"ambiguous name", []glinet.Tunnel{home, dup}, "Home/WG", false, nil, true},
+		{"id of duplicate name", []glinet.Tunnel{home, dup}, "2003", false, []glinet.Tunnel{dup}, false},
+		{"id wins over numeric name", []glinet.Tunnel{home, numeric}, "2001", false, []glinet.Tunnel{home}, false},
+		{"numeric name", []glinet.Tunnel{work, numeric}, "2001", false, []glinet.Tunnel{numeric}, false},
+		{"tunnel named all, by name", []glinet.Tunnel{home, all}, "all", false, []glinet.Tunnel{all}, false},
+		{"target all, no such tunnel", []glinet.Tunnel{home, work}, "all", false, nil, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := selectTunnels(tt.tunnels, tt.target)
+			got, err := selectTunnels(tt.tunnels, tt.target, tt.all)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("selectTunnels() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -65,6 +74,47 @@ func TestStatusText(t *testing.T) {
 	}
 }
 
+func TestParse(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool // true for a non-nil action
+	}{
+		{"bare", nil, true},
+		{"status", []string{"status"}, true},
+		{"on -all", []string{"on", "-all"}, true},
+		{"off -all", []string{"off", "-all"}, true},
+		{"restart -all", []string{"restart", "-all"}, true},
+		{"on by id", []string{"on", "2001"}, true},
+		{"off by name", []string{"off", "Home/WG"}, true},
+		{"restart by id", []string{"restart", "2001"}, true},
+		{"on -all=false with target", []string{"on", "-all=false", "2001"}, true},
+		{"on after -- terminator", []string{"on", "--", "-corp"}, true},
+		{"on missing target", []string{"on"}, false},
+		{"on -all with target", []string{"on", "-all", "2001"}, false},
+		{"on two positionals", []string{"on", "a", "b"}, false},
+		{"on unknown flag", []string{"on", "-bogus"}, false},
+		{"restart missing target", []string{"restart"}, false},
+		{"restart -all with target", []string{"restart", "-all", "x"}, false},
+		{"toggle all", []string{"toggle", "all"}, false},
+		{"off -all=false without target", []string{"off", "-all=false"}, false},
+		{"on -wait", []string{"on", "2001", "-wait"}, true},
+		{"restart -all -wait", []string{"restart", "-wait", "-all"}, true},
+		{"off -wait", []string{"off", "2001", "-wait"}, false},
+		{"status -wait", []string{"status", "-wait"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := flag.NewFlagSet("", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			action, err := parse(fs, tt.args)
+			if got := action != nil && err == nil; got != tt.want {
+				t.Errorf("parse(%q) = %v, %v; want ok %v", tt.args, action != nil, err, tt.want)
+			}
+		})
+	}
+}
+
 // Default tunnels for the tests below: one on and connected, two off.
 var (
 	home   = glinettest.Tunnel{ID: 2001, Name: "Home/WG", Enabled: true, Status: 1}
@@ -72,8 +122,7 @@ var (
 	travel = glinettest.Tunnel{ID: 2003, Name: "Travel/WG"}
 )
 
-// fixture starts a fake router with a stateful vpn-client module holding
-// tunnels and returns a client logged in to it.
+// fixture returns a client logged in to a fake router holding tunnels.
 func fixture(t *testing.T, tunnels ...glinettest.Tunnel) (*glinet.Client, *glinettest.VPN) {
 	t.Helper()
 	vpn := glinettest.NewVPN(tunnels...)
@@ -103,6 +152,7 @@ func TestSetTunnels(t *testing.T) {
 		name      string
 		tunnels   []glinettest.Tunnel
 		target    string
+		all       bool
 		enable    bool
 		fail      *glinettest.SetCall
 		wantCalls []glinettest.SetCall
@@ -111,7 +161,7 @@ func TestSetTunnels(t *testing.T) {
 	}{
 		{
 			name:    "on all skips tunnels already on",
-			tunnels: []glinettest.Tunnel{home, work, travel}, target: "all", enable: true,
+			tunnels: []glinettest.Tunnel{home, work, travel}, all: true, enable: true,
 			wantCalls: []glinettest.SetCall{on(2002), on(2003)},
 			wantOut:   "Home/WG: already on\nWork/OVPN: on\nTravel/WG: on\n",
 		},
@@ -123,7 +173,7 @@ func TestSetTunnels(t *testing.T) {
 		},
 		{
 			name:    "a failure does not stop the others",
-			tunnels: []glinettest.Tunnel{home, work, travel}, target: "all", enable: true,
+			tunnels: []glinettest.Tunnel{home, work, travel}, all: true, enable: true,
 			fail:      new(on(2002)),
 			wantCalls: []glinettest.SetCall{on(2002), on(2003)},
 			wantOut:   "Home/WG: already on\nTravel/WG: on\n",
@@ -138,7 +188,7 @@ func TestSetTunnels(t *testing.T) {
 			}
 			var out bytes.Buffer
 
-			err := setTunnels(t.Context(), c, &out, tt.target, tt.enable)
+			err := setTunnels(t.Context(), c, &out, tt.target, tt.all, tt.enable, false)
 
 			checkErr(t, err, tt.wantErr)
 			if got := vpn.Calls(); !slices.Equal(got, tt.wantCalls) {
@@ -155,6 +205,7 @@ func TestRestartTunnels(t *testing.T) {
 	tests := []struct {
 		name      string
 		target    string
+		all       bool
 		fail      *glinettest.SetCall
 		wantCalls []glinettest.SetCall
 		wantOut   string
@@ -162,8 +213,8 @@ func TestRestartTunnels(t *testing.T) {
 	}{
 		{
 			// Restart ignores the current state: the disabled tunnel ends up on.
-			name:   "all, one tunnel at a time",
-			target: "all",
+			name: "-all, one tunnel at a time",
+			all:  true,
 			wantCalls: []glinettest.SetCall{
 				off(2001), on(2001),
 				off(2002), on(2002),
@@ -172,9 +223,9 @@ func TestRestartTunnels(t *testing.T) {
 		},
 		{
 			// A failed off must not be followed by an on for that tunnel.
-			name:   "off fails",
-			target: "all",
-			fail:   new(off(2001)),
+			name: "off fails",
+			all:  true,
+			fail: new(off(2001)),
 			wantCalls: []glinettest.SetCall{
 				off(2001),
 				off(2002), on(2002),
@@ -184,9 +235,9 @@ func TestRestartTunnels(t *testing.T) {
 		},
 		{
 			// A failed on is reported; the next tunnel is still processed.
-			name:   "on fails",
-			target: "all",
-			fail:   new(on(2001)),
+			name: "on fails",
+			all:  true,
+			fail: new(on(2001)),
 			wantCalls: []glinettest.SetCall{
 				off(2001), on(2001),
 				off(2002), on(2002),
@@ -203,7 +254,7 @@ func TestRestartTunnels(t *testing.T) {
 			}
 			var out bytes.Buffer
 
-			err := restartTunnels(t.Context(), c, &out, tt.target)
+			err := restartTunnels(t.Context(), c, &out, tt.target, tt.all, false)
 
 			checkErr(t, err, tt.wantErr)
 			if got := vpn.Calls(); !slices.Equal(got, tt.wantCalls) {
@@ -216,8 +267,7 @@ func TestRestartTunnels(t *testing.T) {
 	}
 }
 
-// Ctrl+C during "all" stops before the next tunnel and reports the
-// cancellation, instead of one failure per remaining tunnel.
+// Ctrl+C during -all stops before the next tunnel and reports it once.
 func TestStopsWhenCancelled(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -227,14 +277,14 @@ func TestStopsWhenCancelled(t *testing.T) {
 		{
 			name: "on",
 			run: func(ctx context.Context, c *glinet.Client) error {
-				return setTunnels(ctx, c, &bytes.Buffer{}, "all", true)
+				return setTunnels(ctx, c, &bytes.Buffer{}, "", true, true, false)
 			},
 			wantCalls: []glinettest.SetCall{on(2002)},
 		},
 		{
 			name: "restart",
 			run: func(ctx context.Context, c *glinet.Client) error {
-				return restartTunnels(ctx, c, &bytes.Buffer{}, "all")
+				return restartTunnels(ctx, c, &bytes.Buffer{}, "", true, false)
 			},
 			wantCalls: []glinettest.SetCall{off(2001)},
 		},
@@ -264,8 +314,91 @@ func TestStopsWhenCancelled(t *testing.T) {
 	}
 }
 
-// checkErr fails t unless err contains every substring in want, or, with
-// want nil, unless err is nil.
+// -wait polls until each tunnel is connected, already enabled ones included.
+func TestWaitConnected(t *testing.T) {
+	pollInterval = time.Millisecond
+	tests := []struct {
+		name    string
+		run     func(context.Context, *glinet.Client, io.Writer) error
+		wantOut string
+	}{
+		{
+			name: "on -all",
+			run: func(ctx context.Context, c *glinet.Client, w io.Writer) error {
+				return setTunnels(ctx, c, w, "", true, true, true)
+			},
+			wantOut: "Home/WG: already on\nHome/WG: connected\n" +
+				"Work/OVPN: on\nWork/OVPN: connected\n",
+		},
+		{
+			name: "restart",
+			run: func(ctx context.Context, c *glinet.Client, w io.Writer) error {
+				return restartTunnels(ctx, c, w, "2002", false, true)
+			},
+			wantOut: "Work/OVPN: restarted\nWork/OVPN: connected\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, vpn := fixture(t, home, work)
+			vpn.ConnectAfter(3)
+			var out bytes.Buffer
+
+			if err := tt.run(t.Context(), c, &out); err != nil {
+				t.Fatalf("error = %v, output %q", err, out.String())
+			}
+			if out.String() != tt.wantOut {
+				t.Errorf("output = %q, want %q", out.String(), tt.wantOut)
+			}
+		})
+	}
+}
+
+// The timeout fails the wait and skips the remaining tunnels.
+func TestWaitTimeout(t *testing.T) {
+	pollInterval = time.Millisecond
+	c, vpn := fixture(t, work, travel)
+	vpn.ConnectAfter(1 << 30)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+
+	err := setTunnels(ctx, c, io.Discard, "", true, true, true)
+
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "Work/OVPN: not connected") {
+		t.Fatalf("error = %v, want Work/OVPN not connected: deadline exceeded", err)
+	}
+	if strings.Contains(err.Error(), "Travel/WG") {
+		t.Errorf("error = %q, want no failure for tunnels after the timeout", err)
+	}
+	if want := []glinettest.SetCall{on(2002)}; !slices.Equal(vpn.Calls(), want) {
+		t.Errorf("set_tunnel calls = %+v, want %+v", vpn.Calls(), want)
+	}
+}
+
+// "on -all" works through the real login path, password from GLINET_PASSWORD.
+func TestParseOnAllAction(t *testing.T) {
+	t.Setenv("GLINET_PASSWORD", glinettest.Password)
+	vpn := glinettest.NewVPN(home, work, travel)
+	cfg := config.Config{URL: glinettest.NewRouter(t, vpn.Handlers()).URL, User: glinettest.User, Timeout: time.Minute}
+
+	action, err := parse(flag.NewFlagSet("", flag.ContinueOnError), []string{"on", "-all"})
+	if action == nil || err != nil {
+		t.Fatalf("parse([on -all]) = %v, %v; want action", action != nil, err)
+	}
+	var out bytes.Buffer
+	if err := action(t.Context(), cfg, cmd.IO{Out: &out}); err != nil {
+		t.Fatalf("action() error = %v, output %q", err, out.String())
+	}
+	if want := []glinettest.SetCall{on(2002), on(2003)}; !slices.Equal(vpn.Calls(), want) {
+		t.Errorf("set_tunnel calls = %+v, want %+v", vpn.Calls(), want)
+	}
+	if want := "Home/WG: already on\nWork/OVPN: on\nTravel/WG: on\n"; out.String() != want {
+		t.Errorf("output = %q, want %q", out.String(), want)
+	}
+}
+
+// checkErr fails t unless err contains every substring in want, or is nil
+// when want is nil.
 func checkErr(t *testing.T, err error, want []string) {
 	t.Helper()
 	if want == nil {
@@ -279,7 +412,7 @@ func checkErr(t *testing.T, err error, want []string) {
 	}
 	for _, s := range want {
 		if !strings.Contains(err.Error(), s) {
-			t.Errorf("error = %q, want it to contain %q", err, s)
+			t.Errorf("error = %q, want it to contain %q", err.Error(), s)
 		}
 	}
 }

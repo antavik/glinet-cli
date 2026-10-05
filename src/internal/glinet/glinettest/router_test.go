@@ -59,8 +59,7 @@ func TestSessions(t *testing.T) {
 		t.Fatal("LoggedOut() = true before any login")
 	}
 
-	// Two logins in a row, like two CLI runs: logging out the first must not
-	// end the second.
+	// Logging out one session must not end another.
 	first, second := glinet.NewClient(router.URL), glinet.NewClient(router.URL)
 	for _, c := range []*glinet.Client{first, second} {
 		if err := c.Login(t.Context(), User, Password); err != nil {

@@ -184,8 +184,7 @@ func loggedIn(t *testing.T, calls map[string]glinettest.Handler) *Client {
 	return c
 }
 
-// rawRouter answers each JSON-RPC method with the body reply returns for it,
-// so tests can send replies the fake router never would.
+// rawRouter answers each JSON-RPC method with the body reply returns.
 func rawRouter(t *testing.T, reply func(method string) string) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

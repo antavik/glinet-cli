@@ -36,8 +36,8 @@ type RPCError struct {
 
 // Router mimics firmware 4.9.0: it accepts User and Password and answers
 // "call" requests from handlers keyed by "module.function". Other calls fail
-// with "Method not found". Each login opens a new session with its own ID;
-// calls with an unknown or logged-out session ID fail with "Access denied".
+// with "Method not found". Each login opens a new session; unknown or
+// logged-out sessions get "Access denied".
 type Router struct {
 	URL string
 
@@ -45,8 +45,7 @@ type Router struct {
 	sessions map[string]bool // session ID -> still active
 }
 
-// LoggedOut reports whether a client logged in and every session opened
-// since has been logged out.
+// LoggedOut reports whether every opened session has logged out.
 func (r *Router) LoggedOut() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
