@@ -42,8 +42,8 @@ func parse(args []string) cmd.Action {
 
 // login asks for the password, checks it with the router and saves it in
 // the OS keychain.
-func login(ctx context.Context, cfg config.Config) error {
-	password, err := readPassword(ctx, fmt.Sprintf("Password for %s: ", cfg.Account()))
+func login(ctx context.Context, cfg config.Config, stdio cmd.IO) error {
+	password, err := readPassword(ctx, stdio, fmt.Sprintf("Password for %s: ", cfg.Account()))
 	if err != nil {
 		return err
 	}
@@ -63,38 +63,38 @@ func login(ctx context.Context, cfg config.Config) error {
 	if err := keychain.Save(cfg.Account(), password); err != nil {
 		return err
 	}
-	fmt.Println("Logged in. Password saved to the OS keychain.")
+	fmt.Fprintln(stdio.Out, "Logged in. Password saved to the OS keychain.")
 	return nil
 }
 
 // logout removes the saved password.
-func logout(_ context.Context, cfg config.Config) error {
+func logout(_ context.Context, cfg config.Config, stdio cmd.IO) error {
 	deleted, err := keychain.Delete(cfg.Account())
 	switch {
 	case err != nil:
 		return err
 	case deleted:
-		fmt.Println("Password removed from the OS keychain.")
+		fmt.Fprintln(stdio.Out, "Password removed from the OS keychain.")
 	default:
-		fmt.Println("No saved password.")
+		fmt.Fprintln(stdio.Out, "No saved password.")
 	}
 	return nil
 }
 
-// readPassword reads one line from stdin. On a terminal it prompts on stderr
-// and hides input; piped input lets a password manager feed it. Either way
-// Ctrl+C or SIGTERM ends the wait: main catches them, so a read that ignored
-// ctx would leave the process hanging on a pipe that never closes.
-func readPassword(ctx context.Context, prompt string) (string, error) {
-	fd := int(os.Stdin.Fd())
+// readPassword reads one line from stdio.In. On a terminal it prompts on
+// stdio.Err and hides input; piped input lets a password manager feed it.
+// Either way Ctrl+C or SIGTERM ends the wait: main catches them, so a read
+// that ignored ctx would leave the process hanging on a pipe that never closes.
+func readPassword(ctx context.Context, stdio cmd.IO, prompt string) (string, error) {
 	read := func() (string, error) {
-		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		line, err := bufio.NewReader(stdio.In).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return "", err
 		}
 		return strings.TrimRight(line, "\r\n"), nil
 	}
-	if term.IsTerminal(fd) {
+	if f, ok := stdio.In.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		fd := int(f.Fd())
 		// ReadPassword turns echo off until Enter; turn it back on if the
 		// user presses Ctrl+C instead.
 		state, err := term.GetState(fd)
@@ -103,9 +103,9 @@ func readPassword(ctx context.Context, prompt string) (string, error) {
 		}
 		defer func() {
 			_ = term.Restore(fd, state) // Best effort: the read's error is the one to report.
-			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(stdio.Err)
 		}()
-		fmt.Fprint(os.Stderr, prompt)
+		fmt.Fprint(stdio.Err, prompt)
 		read = func() (string, error) {
 			p, err := term.ReadPassword(fd)
 			return string(p), err

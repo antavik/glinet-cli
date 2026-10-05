@@ -1,0 +1,41 @@
+# vpn: list, on, off and restart against a fake router that keeps state.
+
+# List.
+exec glinet-cli vpn
+cmp stdout list.txt
+! stderr .
+exec glinet-cli vpn status
+cmp stdout list.txt
+
+# Off by name, any case; the next list shows it.
+exec glinet-cli vpn off home/wg
+cmp stdout off-home.txt
+exec glinet-cli vpn
+stdout '^2001  Home/WG    off      -$'
+
+# On all turns on only what is off.
+exec glinet-cli vpn on all
+cmp stdout on-all.txt
+
+# Restart by ID.
+exec glinet-cli vpn restart 2003
+stdout '^Travel/WG: restarted$'
+exec glinet-cli vpn
+stdout '^2003  Travel/WG  on       connected$'
+
+# Unknown target: exit 1, prefixed message on stderr, nothing on stdout.
+exits 1 glinet-cli vpn off nope
+! stdout .
+stderr '^glinet-cli: no VPN tunnel matches "nope"$'
+
+-- list.txt --
+ID    NAME       ENABLED  STATUS
+2001  Home/WG    on       connected
+2002  Work/OVPN  off      -
+2003  Travel/WG  on       connecting
+-- off-home.txt --
+Home/WG: off
+-- on-all.txt --
+Home/WG: on
+Work/OVPN: on
+Travel/WG: already on

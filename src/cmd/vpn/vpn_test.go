@@ -1,11 +1,11 @@
 package vpn
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
-	"reflect"
+	"errors"
+	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/antavik/glinet-cli/src/internal/glinet"
@@ -40,7 +40,7 @@ func TestSelectTunnels(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("selectTunnels() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if !reflect.DeepEqual(got, tt.want) {
+			if !slices.Equal(got, tt.want) {
 				t.Errorf("selectTunnels() = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -65,147 +65,221 @@ func TestStatusText(t *testing.T) {
 	}
 }
 
-// setCall is one recorded vpn-client.set_tunnel request.
-type setCall struct {
-	ID      int
-	Enabled bool
-}
+// Default tunnels for the tests below: one on and connected, two off.
+var (
+	home   = glinettest.Tunnel{ID: 2001, Name: "Home/WG", Enabled: true, Status: 1}
+	work   = glinettest.Tunnel{ID: 2002, Name: "Work/OVPN"}
+	travel = glinettest.Tunnel{ID: 2003, Name: "Travel/WG"}
+)
 
-// restartFixture serves two tunnels (2001 enabled, 2002 disabled) and records
-// every set_tunnel call in order, including failed ones. fail, if non-nil, may
-// return a *glinettest.RPCError to inject a JSON-RPC error for a call.
-func restartFixture(t *testing.T, fail func(setCall) *glinettest.RPCError) (*glinet.Client, func() []setCall) {
+// fixture starts a fake router with a stateful vpn-client module holding
+// tunnels and returns a client logged in to it.
+func fixture(t *testing.T, tunnels ...glinettest.Tunnel) (*glinet.Client, *glinettest.VPN) {
 	t.Helper()
-
-	var (
-		mu    sync.Mutex
-		calls []setCall
-	)
-	router := glinettest.NewRouter(t, map[string]glinettest.Handler{
-		"vpn-client.get_status": func(json.RawMessage) any {
-			return json.RawMessage(`{"status_list":[
-				{"tunnel_id":2001,"name":"Home/WG","enabled":true,"status":1},
-				{"tunnel_id":2002,"name":"Work/OVPN","enabled":false,"status":0}
-			]}`)
-		},
-		"vpn-client.set_tunnel": func(args json.RawMessage) any {
-			var a struct {
-				TunnelID int  `json:"tunnel_id"`
-				Enabled  bool `json:"enabled"`
-			}
-			if err := json.Unmarshal(args, &a); err != nil {
-				t.Errorf("decode set_tunnel args %s: %v", args, err)
-			}
-			call := setCall{a.TunnelID, a.Enabled}
-
-			mu.Lock()
-			calls = append(calls, call)
-			mu.Unlock()
-
-			if fail != nil {
-				if res := fail(call); res != nil {
-					return res
-				}
-			}
-			return map[string]any{"tunnel_id": a.TunnelID}
-		},
-	})
-
-	c := glinet.NewClient(router.URL)
-	if err := c.Login(context.Background(), glinettest.User, glinettest.Password); err != nil {
+	vpn := glinettest.NewVPN(tunnels...)
+	c := glinet.NewClient(glinettest.NewRouter(t, vpn.Handlers()).URL)
+	if err := c.Login(t.Context(), glinettest.User, glinettest.Password); err != nil {
 		t.Fatal(err)
 	}
-	recorded := func() []setCall {
-		mu.Lock()
-		defer mu.Unlock()
-		return append([]setCall(nil), calls...)
-	}
-	return c, recorded
+	return c, vpn
 }
 
-func TestRestartTunnelsCyclesSequentially(t *testing.T) {
-	c, recorded := restartFixture(t, nil)
+// on and off are the set_tunnel calls that turn tunnel id on or off.
+func on(id int) glinettest.SetCall  { return glinettest.SetCall{ID: id, Enabled: true} }
+func off(id int) glinettest.SetCall { return glinettest.SetCall{ID: id, Enabled: false} }
 
-	if err := restartTunnels(context.Background(), c, "all"); err != nil {
-		t.Fatalf("restartTunnels() error = %v", err)
-	}
-
-	// The disabled tunnel (2002) is cycled too: restart ignores current state.
-	want := []setCall{{2001, false}, {2001, true}, {2002, false}, {2002, true}}
-	if got := recorded(); !reflect.DeepEqual(got, want) {
-		t.Errorf("set_tunnel calls = %+v, want %+v", got, want)
+// failOn makes set_tunnel fail for exactly the given call.
+func failOn(call glinettest.SetCall) func(glinettest.SetCall) *glinettest.RPCError {
+	return func(c glinettest.SetCall) *glinettest.RPCError {
+		if c == call {
+			return &glinettest.RPCError{Code: -1, Message: "injected failure"}
+		}
+		return nil
 	}
 }
 
-func TestRestartTunnelsByName(t *testing.T) {
-	c, recorded := restartFixture(t, nil)
-
-	if err := restartTunnels(context.Background(), c, "work/ovpn"); err != nil {
-		t.Fatalf("restartTunnels() error = %v", err)
-	}
-
-	want := []setCall{{2002, false}, {2002, true}}
-	if got := recorded(); !reflect.DeepEqual(got, want) {
-		t.Errorf("set_tunnel calls = %+v, want %+v", got, want)
-	}
-}
-
-func TestRestartTunnelsUnknownTarget(t *testing.T) {
-	c, recorded := restartFixture(t, nil)
-
-	err := restartTunnels(context.Background(), c, "nope")
-	if err == nil || !strings.Contains(err.Error(), "no VPN tunnel matches") {
-		t.Fatalf("restartTunnels() error = %v, want it to contain %q", err, "no VPN tunnel matches")
-	}
-	if got := recorded(); len(got) != 0 {
-		t.Errorf("set_tunnel calls = %+v, want none", got)
-	}
-}
-
-func TestRestartTunnelsFailure(t *testing.T) {
+func TestSetTunnels(t *testing.T) {
 	tests := []struct {
-		name     string
-		failOn   setCall
-		wantCall []setCall
+		name      string
+		tunnels   []glinettest.Tunnel
+		target    string
+		enable    bool
+		fail      *glinettest.SetCall
+		wantCalls []glinettest.SetCall
+		wantOut   string
+		wantErr   []string // substrings; nil for success
 	}{
 		{
-			// A failed off must not be followed by an on for that tunnel.
-			name:   "off fails",
-			failOn: setCall{2001, false},
-			wantCall: []setCall{
-				{2001, false},
-				{2002, false}, {2002, true},
-			},
+			name:    "on all skips tunnels already on",
+			tunnels: []glinettest.Tunnel{home, work, travel}, target: "all", enable: true,
+			wantCalls: []glinettest.SetCall{on(2002), on(2003)},
+			wantOut:   "Home/WG: already on\nWork/OVPN: on\nTravel/WG: on\n",
 		},
 		{
-			// A failed on is reported; the next tunnel is still processed.
-			name:   "on fails",
-			failOn: setCall{2001, true},
-			wantCall: []setCall{
-				{2001, false}, {2001, true},
-				{2002, false}, {2002, true},
-			},
+			name:    "off by id",
+			tunnels: []glinettest.Tunnel{home, work}, target: "2001", enable: false,
+			wantCalls: []glinettest.SetCall{off(2001)},
+			wantOut:   "Home/WG: off\n",
+		},
+		{
+			name:    "a failure does not stop the others",
+			tunnels: []glinettest.Tunnel{home, work, travel}, target: "all", enable: true,
+			fail:      new(on(2002)),
+			wantCalls: []glinettest.SetCall{on(2002), on(2003)},
+			wantOut:   "Home/WG: already on\nTravel/WG: on\n",
+			wantErr:   []string{"Work/OVPN", "injected failure"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c, recorded := restartFixture(t, func(call setCall) *glinettest.RPCError {
-				if call == tt.failOn {
-					return &glinettest.RPCError{Code: -1, Message: "injected failure"}
-				}
+			c, vpn := fixture(t, tt.tunnels...)
+			if tt.fail != nil {
+				vpn.FailWith(failOn(*tt.fail))
+			}
+			var out bytes.Buffer
+
+			err := setTunnels(t.Context(), c, &out, tt.target, tt.enable)
+
+			checkErr(t, err, tt.wantErr)
+			if got := vpn.Calls(); !slices.Equal(got, tt.wantCalls) {
+				t.Errorf("set_tunnel calls = %+v, want %+v", got, tt.wantCalls)
+			}
+			if out.String() != tt.wantOut {
+				t.Errorf("output = %q, want %q", out.String(), tt.wantOut)
+			}
+		})
+	}
+}
+
+func TestRestartTunnels(t *testing.T) {
+	tests := []struct {
+		name      string
+		target    string
+		fail      *glinettest.SetCall
+		wantCalls []glinettest.SetCall
+		wantOut   string
+		wantErr   []string
+	}{
+		{
+			// Restart ignores the current state: the disabled tunnel ends up on.
+			name:   "all, one tunnel at a time",
+			target: "all",
+			wantCalls: []glinettest.SetCall{
+				off(2001), on(2001),
+				off(2002), on(2002),
+			},
+			wantOut: "Home/WG: restarted\nWork/OVPN: restarted\n",
+		},
+		{
+			// A failed off must not be followed by an on for that tunnel.
+			name:   "off fails",
+			target: "all",
+			fail:   new(off(2001)),
+			wantCalls: []glinettest.SetCall{
+				off(2001),
+				off(2002), on(2002),
+			},
+			wantOut: "Work/OVPN: restarted\n",
+			wantErr: []string{"Home/WG", "injected failure"},
+		},
+		{
+			// A failed on is reported; the next tunnel is still processed.
+			name:   "on fails",
+			target: "all",
+			fail:   new(on(2001)),
+			wantCalls: []glinettest.SetCall{
+				off(2001), on(2001),
+				off(2002), on(2002),
+			},
+			wantOut: "Work/OVPN: restarted\n",
+			wantErr: []string{"Home/WG", "injected failure"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, vpn := fixture(t, home, work)
+			if tt.fail != nil {
+				vpn.FailWith(failOn(*tt.fail))
+			}
+			var out bytes.Buffer
+
+			err := restartTunnels(t.Context(), c, &out, tt.target)
+
+			checkErr(t, err, tt.wantErr)
+			if got := vpn.Calls(); !slices.Equal(got, tt.wantCalls) {
+				t.Errorf("set_tunnel calls = %+v, want %+v", got, tt.wantCalls)
+			}
+			if out.String() != tt.wantOut {
+				t.Errorf("output = %q, want %q", out.String(), tt.wantOut)
+			}
+		})
+	}
+}
+
+// Ctrl+C during "all" stops before the next tunnel and reports the
+// cancellation, instead of one failure per remaining tunnel.
+func TestStopsWhenCancelled(t *testing.T) {
+	tests := []struct {
+		name      string
+		run       func(context.Context, *glinet.Client) error
+		wantCalls []glinettest.SetCall
+	}{
+		{
+			name: "on",
+			run: func(ctx context.Context, c *glinet.Client) error {
+				return setTunnels(ctx, c, &bytes.Buffer{}, "all", true)
+			},
+			wantCalls: []glinettest.SetCall{on(2002)},
+		},
+		{
+			name: "restart",
+			run: func(ctx context.Context, c *glinet.Client) error {
+				return restartTunnels(ctx, c, &bytes.Buffer{}, "all")
+			},
+			wantCalls: []glinettest.SetCall{off(2001)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, vpn := fixture(t, home, work, travel)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			vpn.FailWith(func(glinettest.SetCall) *glinettest.RPCError {
+				cancel() // Ctrl+C while the first set_tunnel is in flight
 				return nil
 			})
 
-			err := restartTunnels(context.Background(), c, "all")
-			if err == nil {
-				t.Fatal("restartTunnels() error = nil, want error")
+			err := tt.run(ctx, c)
+
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("error = %v, want context.Canceled", err)
 			}
-			if !strings.Contains(err.Error(), "Home/WG") {
-				t.Errorf("restartTunnels() error = %q, want it to name tunnel %q", err, "Home/WG")
+			if strings.Contains(err.Error(), "Travel/WG") {
+				t.Errorf("error = %q, want no failure for tunnels after the cancel", err)
 			}
-			if got := recorded(); !reflect.DeepEqual(got, tt.wantCall) {
-				t.Errorf("set_tunnel calls = %+v, want %+v", got, tt.wantCall)
+			if got := vpn.Calls(); !slices.Equal(got, tt.wantCalls) {
+				t.Errorf("set_tunnel calls = %+v, want %+v", got, tt.wantCalls)
 			}
 		})
+	}
+}
+
+// checkErr fails t unless err contains every substring in want, or, with
+// want nil, unless err is nil.
+func checkErr(t *testing.T, err error, want []string) {
+	t.Helper()
+	if want == nil {
+		if err != nil {
+			t.Fatalf("error = %v, want nil", err)
+		}
+		return
+	}
+	if err == nil {
+		t.Fatalf("error = nil, want one containing %q", want)
+	}
+	for _, s := range want {
+		if !strings.Contains(err.Error(), s) {
+			t.Errorf("error = %q, want it to contain %q", err, s)
+		}
 	}
 }

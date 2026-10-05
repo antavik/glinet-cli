@@ -1,0 +1,22 @@
+# Tunnel names come from the router: escape sequences and bidi overrides
+# must not reach the terminal, and names that clash need the ID.
+# TestSelectTunnels covers which tunnel an ID or name picks.
+
+exec glinet-cli vpn
+cmp stdout list.txt
+
+# Two tunnels named alike: the name is ambiguous.
+exits 1 glinet-cli vpn off office
+stderr '^glinet-cli: "office" matches 2 VPN tunnels, use the tunnel ID$'
+
+-- tunnels.json --
+[
+  {"tunnel_id": 10, "name": "Evil\u001b[2J‮WG", "enabled": true, "status": 7},
+  {"tunnel_id": 11, "name": "Office", "enabled": true, "status": 1},
+  {"tunnel_id": 12, "name": "office", "enabled": true, "status": 0}
+]
+-- list.txt --
+ID  NAME         ENABLED  STATUS
+10  Evil?[2J?WG  on       unknown (7)
+11  Office       on       connected
+12  office       on       disconnected

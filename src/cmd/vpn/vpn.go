@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,29 +35,29 @@ func parse(args []string) cmd.Action {
 		return cmd.WithClient(printTunnels)
 	case len(args) == 2 && (args[0] == "on" || args[0] == "off"):
 		target, enable := args[1], args[0] == "on"
-		return cmd.WithClient(func(ctx context.Context, c *glinet.Client) error {
-			return setTunnels(ctx, c, target, enable)
+		return cmd.WithClient(func(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
+			return setTunnels(ctx, c, stdio.Out, target, enable)
 		})
 	case len(args) == 2 && args[0] == "restart":
 		target := args[1]
-		return cmd.WithClient(func(ctx context.Context, c *glinet.Client) error {
-			return restartTunnels(ctx, c, target)
+		return cmd.WithClient(func(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
+			return restartTunnels(ctx, c, stdio.Out, target)
 		})
 	}
 	return nil
 }
 
-func printTunnels(ctx context.Context, c *glinet.Client) error {
+func printTunnels(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
 	tunnels, err := c.Tunnels(ctx)
 	if err != nil {
 		return err
 	}
 	if len(tunnels) == 0 {
-		fmt.Println("No VPN tunnels configured.")
+		fmt.Fprintln(stdio.Out, "No VPN tunnels configured.")
 		return nil
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(stdio.Out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ID\tNAME\tENABLED\tSTATUS")
 	for _, t := range tunnels {
 		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", t.ID, t.Name, onOff(t.Enabled), statusText(t))
@@ -66,8 +66,9 @@ func printTunnels(ctx context.Context, c *glinet.Client) error {
 }
 
 // setTunnels turns the tunnels matching target on or off, skipping those
-// already in that state. It keeps going after a failure and reports all errors.
-func setTunnels(ctx context.Context, c *glinet.Client, target string, enable bool) error {
+// already in that state. It keeps going after a failure and reports all
+// errors, and stops early once ctx is cancelled.
+func setTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target string, enable bool) error {
 	tunnels, err := c.Tunnels(ctx)
 	if err != nil {
 		return err
@@ -77,21 +78,27 @@ func setTunnels(ctx context.Context, c *glinet.Client, target string, enable boo
 		return err
 	}
 	if len(selected) == 0 {
-		fmt.Println("No VPN tunnels configured.")
+		fmt.Fprintln(w, "No VPN tunnels configured.")
 		return nil
 	}
 
 	var errs []error
 	for _, t := range selected {
 		if t.Enabled == enable {
-			fmt.Printf("%s: already %s\n", t.Name, onOff(enable))
+			fmt.Fprintf(w, "%s: already %s\n", t.Name, onOff(enable))
 			continue
+		}
+		// As in restartTunnels: after Ctrl+C or the timeout, report the
+		// cancellation once instead of one failure per remaining tunnel.
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
 		}
 		if err := c.SetTunnel(ctx, t.ID, enable); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", t.Name, err))
 			continue
 		}
-		fmt.Printf("%s: %s\n", t.Name, onOff(enable))
+		fmt.Fprintf(w, "%s: %s\n", t.Name, onOff(enable))
 	}
 	return errors.Join(errs...)
 }
@@ -100,7 +107,7 @@ func setTunnels(ctx context.Context, c *glinet.Client, target string, enable boo
 // a time, ignoring the current state, so a disabled tunnel ends up enabled. A
 // tunnel whose off fails is not turned on. It keeps going after a failure and
 // reports all errors, and stops early once ctx is cancelled.
-func restartTunnels(ctx context.Context, c *glinet.Client, target string) error {
+func restartTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target string) error {
 	tunnels, err := c.Tunnels(ctx)
 	if err != nil {
 		return err
@@ -110,7 +117,7 @@ func restartTunnels(ctx context.Context, c *glinet.Client, target string) error 
 		return err
 	}
 	if len(selected) == 0 {
-		fmt.Println("No VPN tunnels configured.")
+		fmt.Fprintln(w, "No VPN tunnels configured.")
 		return nil
 	}
 
@@ -130,7 +137,7 @@ func restartTunnels(ctx context.Context, c *glinet.Client, target string) error 
 			errs = append(errs, fmt.Errorf("%s: %w", t.Name, err))
 			continue
 		}
-		fmt.Printf("%s: restarted\n", t.Name)
+		fmt.Fprintf(w, "%s: restarted\n", t.Name)
 	}
 	return errors.Join(errs...)
 }

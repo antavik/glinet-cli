@@ -25,12 +25,12 @@ func parse(args []string) cmd.Action {
 	return cmd.WithClient(printUptime)
 }
 
-func printUptime(ctx context.Context, c *glinet.Client) error {
+func printUptime(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
 	uptime, err := c.Uptime(ctx)
 	if err != nil {
 		return err
 	}
-	fmt.Println("Uptime:", formatUptime(uptime))
+	fmt.Fprintln(stdio.Out, "Uptime:", formatUptime(uptime))
 	return nil
 }
 

@@ -1,0 +1,5 @@
+# status: router uptime.
+
+exec glinet-cli status
+stdout '^Uptime: 1d 1h 1m$'
+! stderr .
