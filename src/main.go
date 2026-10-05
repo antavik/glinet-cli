@@ -27,13 +27,8 @@ var version = "dev"
 
 func main() {
 	var cfg config.Config
-	cfg.RegisterFlags(flag.CommandLine)
-	showVersion := flag.Bool("version", false, "print version and exit")
-	flag.Usage = func() {
-		printUsage(flag.CommandLine.Output())
-		flag.PrintDefaults()
-	}
-	flag.Parse()
+	fs, showVersion := newFlagSet(&cfg)
+	_ = fs.Parse(os.Args[1:]) // ExitOnError: a bad flag exits with code 2.
 
 	if *showVersion {
 		fmt.Println("glinet-cli", version)
@@ -45,9 +40,9 @@ func main() {
 		os.Exit(2)
 	}
 
-	action := parseCommand(flag.Args())
+	action := parseCommand(fs.Args())
 	if action == nil {
-		flag.Usage()
+		fs.Usage()
 		os.Exit(2)
 	}
 
@@ -55,6 +50,21 @@ func main() {
 		fmt.Fprintln(os.Stderr, "glinet-cli:", err)
 		os.Exit(1)
 	}
+}
+
+// newFlagSet defines the global flags, filling cfg, plus -version. Its Usage
+// prints the whole help. A flag set of its own, not flag.CommandLine, keeps
+// flags other packages register (such as the test binary's) out of the help.
+func newFlagSet(cfg *config.Config) (*flag.FlagSet, *bool) {
+	fs := flag.NewFlagSet("glinet-cli", flag.ExitOnError)
+	cfg.RegisterFlags(fs)
+
+	showVersion := fs.Bool("version", false, "print version and exit")
+	fs.Usage = func() {
+		printUsage(fs.Output())
+		fs.PrintDefaults()
+	}
+	return fs, showVersion
 }
 
 // parseCommand maps command-line arguments to an action, or nil if they are invalid.
@@ -72,7 +82,7 @@ func parseCommand(args []string) cmd.Action {
 func run(cfg config.Config, action cmd.Action) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return action(ctx, cfg)
+	return action(ctx, cfg, cmd.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
 }
 
 // printUsage writes the help text up to the flag list.

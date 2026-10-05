@@ -1,7 +1,6 @@
 package glinettest
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -17,10 +16,10 @@ func callTunnels(t *testing.T, result any) ([]glinet.Tunnel, error) {
 		"vpn-client.get_status": func(json.RawMessage) any { return result },
 	})
 	c := glinet.NewClient(router.URL)
-	if err := c.Login(context.Background(), User, Password); err != nil {
+	if err := c.Login(t.Context(), User, Password); err != nil {
 		t.Fatal(err)
 	}
-	return c.Tunnels(context.Background())
+	return c.Tunnels(t.Context())
 }
 
 func TestRPCError(t *testing.T) {
@@ -49,5 +48,34 @@ func TestNilRPCErrorPointerIsResult(t *testing.T) {
 	}
 	if len(tunnels) != 0 {
 		t.Errorf("Tunnels() = %+v, want no tunnels", tunnels)
+	}
+}
+
+func TestSessions(t *testing.T) {
+	router := NewRouter(t, map[string]Handler{
+		"vpn-client.get_status": func(json.RawMessage) any { return map[string]any{"status_list": []any{}} },
+	})
+	if router.LoggedOut() {
+		t.Fatal("LoggedOut() = true before any login")
+	}
+
+	// Two logins in a row, like two CLI runs: logging out the first must not
+	// end the second.
+	first, second := glinet.NewClient(router.URL), glinet.NewClient(router.URL)
+	for _, c := range []*glinet.Client{first, second} {
+		if err := c.Login(t.Context(), User, Password); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first.Logout()
+	if router.LoggedOut() {
+		t.Error("LoggedOut() = true with a session still open")
+	}
+	if _, err := second.Tunnels(t.Context()); err != nil {
+		t.Errorf("second session after first logout: %v", err)
+	}
+	second.Logout()
+	if !router.LoggedOut() {
+		t.Error("LoggedOut() = false after every session logged out")
 	}
 }

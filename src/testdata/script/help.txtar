@@ -1,0 +1,63 @@
+# Help text, exit codes and flag handling. No router call happens here.
+
+# The flag defaults in the help come from the environment; clear it so the
+# golden file matches.
+env GLINET_URL=
+env GLINET_USER=
+
+# No command: help on stderr, exit 2.
+exits 2 glinet-cli
+! stdout .
+cmp stderr usage.txt
+
+# -h prints the same help and exits 0.
+exits 0 glinet-cli -h
+cmp stderr usage.txt
+
+# Unknown command: help, exit 2. TestParseCommand covers which arguments
+# each command takes.
+exits 2 glinet-cli reboot
+stderr '^Usage: glinet-cli \[flags\] <command>$'
+
+# Global flags go before the command; after it they are arguments.
+exits 2 glinet-cli vpn -url http://x
+stderr '^Usage:'
+
+# Flag errors.
+exits 2 glinet-cli -timeout 0 status
+cmp stderr timeout.txt
+exits 2 glinet-cli -bogus
+stderr '^flag provided but not defined: -bogus$'
+
+# Version.
+exec glinet-cli -version
+stdout '^glinet-cli dev$'
+! stderr .
+
+-- timeout.txt --
+glinet-cli: -timeout must be positive
+-- usage.txt --
+Usage: glinet-cli [flags] <command>
+
+Commands:
+  auth [login]               check password and save it in the OS keychain
+  auth logout                remove the saved password
+  status                     show router uptime
+  vpn [status]               list VPN tunnels
+  vpn on <id|name|all>       turn VPN tunnel(s) on
+  vpn off <id|name|all>      turn VPN tunnel(s) off
+  vpn restart <id|name|all>  restart VPN tunnel(s) (off, then on)
+  web                        open the router web interface in browser
+
+Environment:
+  GLINET_PASSWORD  router password; overrides the saved one
+
+Flags:
+  -timeout duration
+    	timeout for router requests (default 30s)
+  -url string
+    	router URL (env GLINET_URL) (default "http://192.168.8.1")
+  -user string
+    	router username (env GLINET_USER) (default "root")
+  -version
+    	print version and exit

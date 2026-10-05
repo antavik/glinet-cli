@@ -150,11 +150,10 @@ MD5 only. It was found by calling `challenge` on the router.
 
 ```sh
 make          # lint, test, then build ./glinet-cli
-make test     # go test -race
+make test     # go test -race, fails below the coverage minimum
 make lint     # golangci-lint and go mod tidy -diff
 make vuln     # govulncheck; release and publish run it too
 make fmt
-make hooks    # once per clone: version tag prompt after each commit
 make help     # every target
 ```
 
@@ -162,14 +161,24 @@ make help     # every target
 `go run`, so it needs no install and is built with your Go. The first run
 takes a while. Linters are set in `.golangci.yml`.
 
-`make hooks` points Git at `scripts/hooks`. The `post-commit` hook then asks
-after every commit whether to tag it with the next version – patch, minor,
-major, a custom number, or skip (the default) – starting from the highest
-`vX.Y.Z` tag. It only creates a local annotated tag; nothing is committed or
-pushed. It stays quiet without a terminal and during rebase, cherry-pick and
-merge; `GLINET_SKIP_VERSION_BUMP=1 git commit` skips a single commit. After
-`git commit --amend` of a tagged commit it prints the command that moves the
-tag onto the new one.
+### Tests
+
+`make test` runs every test with the race detector and fails when total
+coverage drops below `COVERAGE_MIN` in the `Makefile`. Coverage counts what
+any test reaches in any package, the scripts below included, so a behavior
+needs one test, at the cheapest level that can see it.
+
+- Unit tests sit next to the code. Router work runs against
+  `glinettest.NewRouter`, a fake router on firmware 4.9.0 that issues a new
+  session per login; `glinettest.NewVPN` adds a vpn-client module that keeps
+  tunnel state and records every `set_tunnel` call.
+- `src/testdata/script/*.txtar` are end-to-end scripts
+  ([testscript](https://pkg.go.dev/github.com/rogpeppe/go-internal/testscript)):
+  each runs the real `glinet-cli` against its own fake router and checks
+  stdout, stderr and exit codes (`exits <code> glinet-cli ...`). A script can
+  bring its own `tunnels.json`. The keychain is an in-memory mock there, so
+  tests never touch the OS keychain. Run one with
+  `go test ./src -run TestScript/vpn`; add a behavior by adding a script.
 
 ### Layout
 

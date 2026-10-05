@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"context"
+	"io"
 	"maps"
 	"slices"
 	"strings"
@@ -56,13 +57,21 @@ func All() []Command {
 	})
 }
 
+// IO is where a command reads input and writes output. main passes the
+// process's standard streams; tests pass buffers.
+type IO struct {
+	In  io.Reader
+	Out io.Writer
+	Err io.Writer
+}
+
 // Action runs one parsed command.
-type Action func(context.Context, config.Config) error
+type Action func(context.Context, config.Config, IO) error
 
 // WithClient wraps fn in an action that logs in to the router first and logs
 // out after fn returns, even when ctx is cancelled.
-func WithClient(fn func(context.Context, *glinet.Client) error) Action {
-	return func(ctx context.Context, cfg config.Config) error {
+func WithClient(fn func(context.Context, *glinet.Client, IO) error) Action {
+	return func(ctx context.Context, cfg config.Config, stdio IO) error {
 		password, err := keychain.Password(cfg.Account())
 		if err != nil {
 			return err
@@ -75,6 +84,6 @@ func WithClient(fn func(context.Context, *glinet.Client) error) Action {
 			return err
 		}
 		defer client.Logout()
-		return fn(ctx, client)
+		return fn(ctx, client, stdio)
 	}
 }
