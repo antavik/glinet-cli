@@ -45,7 +45,12 @@ func main() {
 		os.Exit(2)
 	}
 
-	action := parseCommand(flag.Args())
+	args, wait := extractWait(flag.Args())
+	if wait {
+		cfg.Wait = true
+	}
+
+	action := parseCommand(args)
 	if action == nil {
 		flag.Usage()
 		os.Exit(2)
@@ -55,6 +60,23 @@ func main() {
 		fmt.Fprintln(os.Stderr, "glinet-cli:", err)
 		os.Exit(1)
 	}
+}
+
+// extractWait removes every -wait (or --wait) from args and reports whether
+// one was present, so the flag also works after a subcommand:
+// "vpn restart all -wait" behaves like "-wait vpn restart all". Commands
+// parse their arguments strictly, so the flag must be lifted out first.
+func extractWait(args []string) ([]string, bool) {
+	var rest []string
+	wait := false
+	for _, a := range args {
+		if a == "-wait" || a == "--wait" {
+			wait = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return rest, wait
 }
 
 // parseCommand maps command-line arguments to an action, or nil if they are invalid.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -57,5 +58,46 @@ func TestCommands(t *testing.T) {
 				t.Errorf("command %q: usage %q, want %q, a tab, then a summary", c.Name, u, c.Name+"...")
 			}
 		}
+	}
+}
+
+func TestExtractWait(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		rest []string
+		wait bool
+	}{
+		{"absent", []string{"vpn", "restart", "all"}, []string{"vpn", "restart", "all"}, false},
+		{"trailing", []string{"vpn", "restart", "all", "-wait"}, []string{"vpn", "restart", "all"}, true},
+		{"middle", []string{"vpn", "-wait", "restart", "all"}, []string{"vpn", "restart", "all"}, true},
+		{"double dash", []string{"vpn", "on", "2001", "--wait"}, []string{"vpn", "on", "2001"}, true},
+		{"repeated", []string{"-wait", "vpn", "--wait", "status"}, []string{"vpn", "status"}, true},
+		{"empty", nil, nil, false},
+		{"lookalike kept", []string{"vpn", "on", "-waiting"}, []string{"vpn", "on", "-waiting"}, false},
+		{"only flag", []string{"-wait"}, nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rest, wait := extractWait(tt.args)
+			if !slices.Equal(rest, tt.rest) {
+				t.Errorf("extractWait(%q) rest = %q, want %q", tt.args, rest, tt.rest)
+			}
+			if wait != tt.wait {
+				t.Errorf("extractWait(%q) wait = %v, want %v", tt.args, wait, tt.wait)
+			}
+		})
+	}
+}
+
+// -wait after a subcommand must still reach a valid action:
+// "vpn restart all -wait" parses like "vpn restart all".
+func TestExtractWaitThenParseCommand(t *testing.T) {
+	rest, wait := extractWait([]string{"vpn", "restart", "all", "-wait"})
+	if !wait {
+		t.Error("extractWait() wait = false, want true")
+	}
+	if parseCommand(rest) == nil {
+		t.Errorf("parseCommand(%q) = nil, want action", rest)
 	}
 }

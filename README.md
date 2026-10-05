@@ -94,6 +94,7 @@ $ glinet-cli vpn off "Proton/nl-free"  # by name, case-insensitive
 $ glinet-cli vpn off all
 $ glinet-cli vpn restart 2001     # turn off, then on
 $ glinet-cli vpn restart all
+$ glinet-cli vpn restart 2001 -wait  # return once the router finished the restart
 
 $ glinet-cli web                  # open the router web UI in the default browser
 ```
@@ -123,7 +124,8 @@ Some operations, like `vpn on`, are asynchronous: the router answers with a
 task id and runs the operation in the background. With `-wait` the client
 polls the router's `task` method until the operation completes, bounded by
 `-timeout`; without it the command returns as soon as the router accepts the
-request.
+request. The flag may stand anywhere: `glinet-cli -wait vpn on 2001` and
+`glinet-cli vpn on 2001 -wait` do the same.
 
 The password itself never goes over the wire, but the session ID does, in
 plain HTTP, and anyone who records the challenge and login hash can guess
