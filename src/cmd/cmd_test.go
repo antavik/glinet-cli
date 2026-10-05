@@ -17,16 +17,37 @@ func TestWithClientLogsOutAfterCancel(t *testing.T) {
 	router := glinettest.NewRouter(t, nil)
 	cfg := config.Config{URL: router.URL, User: glinettest.User, Timeout: time.Minute}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	err := WithClient(func(ctx context.Context, _ *glinet.Client) error {
+	ctx, cancel := context.WithCancel(t.Context())
+	err := WithClient(func(ctx context.Context, _ *glinet.Client, _ IO) error {
 		cancel() // Ctrl+C mid-command
 		return ctx.Err()
-	})(ctx, cfg)
+	})(ctx, cfg, IO{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("WithClient() error = %v, want context.Canceled", err)
 	}
 	if !router.LoggedOut() {
 		t.Error("WithClient() did not log out after the command was cancelled")
+	}
+}
+
+func TestWithClientTimeout(t *testing.T) {
+	t.Setenv("GLINET_PASSWORD", glinettest.Password)
+	cfg := config.Config{URL: glinettest.NewRouter(t, nil).URL, User: glinettest.User, Timeout: 42 * time.Second}
+
+	start := time.Now()
+	err := WithClient(func(ctx context.Context, _ *glinet.Client, _ IO) error {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return errors.New("context has no deadline")
+		}
+		// Set between start and now, so it lands in [start+T, now+T].
+		if deadline.Before(start.Add(cfg.Timeout)) || deadline.After(time.Now().Add(cfg.Timeout)) {
+			return errors.New("deadline is not -timeout after the command started")
+		}
+		return nil
+	})(t.Context(), cfg, IO{})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

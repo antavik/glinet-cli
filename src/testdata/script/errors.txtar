@@ -1,0 +1,17 @@
+# Failures reach the user as "glinet-cli: <error>" on stderr with exit 1.
+
+# Wrong password: the router's message.
+env GLINET_PASSWORD=wrong
+exits 1 glinet-cli status
+! stdout .
+stderr '^glinet-cli: login: Access denied \(code -32000\)$'
+
+# No password set and none saved (the keychain is mocked and empty).
+env GLINET_PASSWORD=
+exits 1 glinet-cli vpn
+stderr '^glinet-cli: no password for root@http://127\.0\.0\.1:\d+: run "glinet-cli auth" or set GLINET_PASSWORD$'
+
+# Router unreachable: port 1 is closed.
+env GLINET_PASSWORD=x
+exits 1 glinet-cli -url http://127.0.0.1:1 status
+stderr '^glinet-cli: challenge: '

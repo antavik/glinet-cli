@@ -28,7 +28,7 @@ func parse(args []string) cmd.Action {
 	return open
 }
 
-func open(ctx context.Context, cfg config.Config) error {
+func open(ctx context.Context, cfg config.Config, _ cmd.IO) error {
 	return launch(ctx, runtime.GOOS, cfg.URL, execRunner)
 }
 

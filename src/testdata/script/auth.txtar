@@ -1,0 +1,20 @@
+# auth with a piped password, as from a password manager. The keychain is an
+# in-memory mock that lives for one command, so each run starts empty.
+# TestLogin covers wrong and empty passwords.
+
+env GLINET_PASSWORD=
+
+stdin password.txt
+exec glinet-cli auth
+stdout '^Logged in. Password saved to the OS keychain.$'
+! stderr .
+
+stdin password.txt
+exec glinet-cli auth login
+stdout '^Logged in.'
+
+exec glinet-cli auth logout
+stdout '^No saved password.$'
+
+-- password.txt --
+goodlife

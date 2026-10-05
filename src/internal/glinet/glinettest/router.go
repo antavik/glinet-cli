@@ -3,9 +3,10 @@ package glinettest
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
+	"sync"
 	"testing"
 )
 
@@ -18,7 +19,6 @@ const (
 	Password = "goodlife"
 	Salt     = "k4NJToyX"
 	Nonce    = "v0p5vSEoDZfWG8we1Hx0p6ee4zxThgkY"
-	SID      = "test-sid"
 
 	loginHash = "3ae7d3ba18572048dcc6160ebab78a8c90ed98d402027db4c8198788a0ff61df"
 )
@@ -36,21 +36,60 @@ type RPCError struct {
 
 // Router mimics firmware 4.9.0: it accepts User and Password and answers
 // "call" requests from handlers keyed by "module.function". Other calls fail
-// with "Method not found", and calls after logout with "Access denied".
+// with "Method not found". Each login opens a new session with its own ID;
+// calls with an unknown or logged-out session ID fail with "Access denied".
 type Router struct {
-	URL       string
-	loggedOut atomic.Bool
+	URL string
+
+	mu       sync.Mutex
+	sessions map[string]bool // session ID -> still active
 }
 
-// LoggedOut reports whether a client has ended its session.
+// LoggedOut reports whether a client logged in and every session opened
+// since has been logged out.
 func (r *Router) LoggedOut() bool {
-	return r.loggedOut.Load()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.sessions) == 0 {
+		return false
+	}
+	for _, active := range r.sessions {
+		if active {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Router) login() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	sid := fmt.Sprintf("test-sid-%d", len(r.sessions)+1)
+	r.sessions[sid] = true
+	return sid
+}
+
+// logout ends session sid and reports whether it was active.
+func (r *Router) logout(sid string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.sessions[sid] {
+		return false
+	}
+	r.sessions[sid] = false
+	return true
+}
+
+func (r *Router) active(sid string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sessions[sid]
 }
 
 // NewRouter starts a fake router that stops when the test ends.
 func NewRouter(t testing.TB, calls map[string]Handler) *Router {
 	t.Helper()
-	router := &Router{}
+	router := &Router{sessions: map[string]bool{}}
 	decode := func(data json.RawMessage, v any) {
 		if err := json.Unmarshal(data, v); err != nil {
 			t.Errorf("decode params: %v", err)
@@ -68,7 +107,7 @@ func NewRouter(t testing.TB, calls map[string]Handler) *Router {
 		}
 
 		var result any
-		var rpcErr *rpcError
+		var rpcErr *RPCError
 		switch req.Method {
 		case "challenge":
 			result = map[string]any{"hash-method": "sha256", "alg": 1, "salt": Salt, "nonce": Nonce}
@@ -78,47 +117,51 @@ func NewRouter(t testing.TB, calls map[string]Handler) *Router {
 			}
 			decode(req.Params, &p)
 			if p.Hash != loginHash {
-				rpcErr = &rpcError{Code: -32000, Message: "Access denied"}
+				rpcErr = &RPCError{Code: -32000, Message: "Access denied"}
 				break
 			}
-			result = map[string]string{"username": User, "sid": SID}
+			result = map[string]string{"username": User, "sid": router.login()}
 		case "logout":
 			var p struct {
 				SID string `json:"sid"`
 			}
 			decode(req.Params, &p)
-			if p.SID != SID {
-				rpcErr = &rpcError{Code: -32000, Message: "Access denied"}
+			if !router.logout(p.SID) {
+				rpcErr = &RPCError{Code: -32000, Message: "Access denied"}
 				break
 			}
-			router.loggedOut.Store(true)
 			result = map[string]any{}
 		case "call":
 			var p []json.RawMessage
 			var gotSID, module, function string
 			decode(req.Params, &p)
+			if len(p) != 4 {
+				t.Errorf("call params = %s, want [sid, module, function, args]", req.Params)
+				rpcErr = &RPCError{Code: -32602, Message: "Invalid params"}
+				break
+			}
 			decode(p[0], &gotSID)
 			decode(p[1], &module)
 			decode(p[2], &function)
 			h, ok := calls[module+"."+function]
 			switch {
-			case gotSID != SID || router.loggedOut.Load():
-				rpcErr = &rpcError{Code: -32000, Message: "Access denied"}
+			case !router.active(gotSID):
+				rpcErr = &RPCError{Code: -32000, Message: "Access denied"}
 			case !ok:
-				rpcErr = &rpcError{Code: -32601, Message: "Method not found"}
+				rpcErr = &RPCError{Code: -32601, Message: "Method not found"}
 			default:
 				result = h(p[3])
 				switch e := result.(type) {
 				case RPCError:
-					rpcErr, result = &rpcError{Code: e.Code, Message: e.Message}, nil
+					rpcErr, result = &e, nil
 				case *RPCError:
 					if e != nil {
-						rpcErr, result = &rpcError{Code: e.Code, Message: e.Message}, nil
+						rpcErr, result = e, nil
 					}
 				}
 			}
 		default:
-			rpcErr = &rpcError{Code: -32601, Message: "Method not found"}
+			rpcErr = &RPCError{Code: -32601, Message: "Method not found"}
 		}
 
 		resp := map[string]any{"jsonrpc": "2.0", "id": 1}
@@ -134,9 +177,4 @@ func NewRouter(t testing.TB, calls map[string]Handler) *Router {
 	t.Cleanup(srv.Close)
 	router.URL = srv.URL
 	return router
-}
-
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
 }

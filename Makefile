@@ -4,6 +4,9 @@ DIST   := dist
 
 # Coverage profile written by "make test". Override: make test COVERAGE_FILE=cover.out
 COVERAGE_FILE := coverage.out
+# "make test" fails when total coverage drops below this percentage. Raise it
+# as tests land; never lower it to get a change through.
+COVERAGE_MIN := 85
 
 # Release targets, built with CGO off. go-keyring needs no cgo on any of them.
 PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
@@ -31,7 +34,7 @@ GOVULNCHECK ?= go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 SHA256 := $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo shasum -a 256)
 
 .DEFAULT_GOAL := all
-.PHONY: all build release test lint vuln check fmt dist publish hooks clean help
+.PHONY: all build release test lint vuln check fmt dist publish clean help regression regression-report
 
 all: lint test build ## Lint, test and build
 
@@ -43,9 +46,21 @@ build: ## Build ./glinet-cli for this machine
 release: lint test vuln ## Build ./glinet-cli without debug info
 	go build $(RELEASE_FLAGS) -o $(BINARY) $(PKG)
 
-test: ## Run tests with the race detector and print total coverage
-	go test -race -coverprofile=$(COVERAGE_FILE) ./...
-	go tool cover -func=$(COVERAGE_FILE) | tail -1
+test: ## Run tests with the race detector and check total coverage
+	@echo "==> unit + regression tests (race detector)"
+	go test -race -coverpkg=./... -coverprofile=$(COVERAGE_FILE) ./...
+	@$(MAKE) --no-print-directory regression-report
+	@go tool cover -func=$(COVERAGE_FILE) | awk -v min=$(COVERAGE_MIN) '/^total:/ { total = $$3 + 0 } \
+		END { printf "total coverage %.1f%% (minimum %s%%)\n", total, min; \
+		if (total < min) { print "coverage below minimum" > "/dev/stderr"; exit 1 } }'
+
+regression: ## Run only the end-to-end scripts in src/testdata/script
+	go test ./src -run TestScript -count=1 -v
+
+regression-report: ## List each regression script and its result
+	@echo "==> regression scripts (src/testdata/script):"
+	@go test ./src -run TestScript -count=1 -v 2>&1 | \
+		awk '/^ *--- (PASS|FAIL|SKIP): TestScript\// { printf "    %s %s\n", $$2, $$3 }'
 
 lint: ## Run golangci-lint and check that go.mod is tidy
 	$(GOLANGCI_LINT) run ./...
@@ -91,9 +106,6 @@ publish: ## Upload dist/ to a GitHub release for the tag at HEAD
 	$(MAKE) --no-print-directory test vuln dist
 	gh release create v$(VERSION) --verify-tag --generate-notes \
 		$(DIST)/*.tar.gz $(DIST)/*.zip $(DIST)/checksums.txt
-
-hooks: ## Use scripts/hooks as the git hooks dir
-	git config core.hooksPath scripts/hooks
 
 clean: ## Remove build output
 	rm -rf $(BINARY) $(DIST) $(COVERAGE_FILE)

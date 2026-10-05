@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     branches: [main]
+    # Release only when shipped binaries can change.
+    paths:
+      - '**.go'
+      - '!**_test.go'
+      - 'go.mod'
+      - 'go.sum'
 
 permissions:
   contents: write

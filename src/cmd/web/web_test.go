@@ -86,7 +86,7 @@ func TestLaunchValidation(t *testing.T) {
 				called = true
 				return nil
 			}
-			err := launch(context.Background(), "darwin", tt.url, run)
+			err := launch(t.Context(), "darwin", tt.url, run)
 			if called {
 				t.Fatal("launch ran the browser command for an invalid URL; want validation to reject it first")
 			}
@@ -109,7 +109,7 @@ func TestLaunchRunsBrowserCommand(t *testing.T) {
 		gotArgs = args
 		return nil
 	}
-	err := launch(context.Background(), "darwin", "https://router.local", run)
+	err := launch(t.Context(), "darwin", "https://router.local", run)
 	if err != nil {
 		t.Fatalf("launch returned unexpected error: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestLaunchPropagatesRunnerError(t *testing.T) {
 	run := func(ctx context.Context, name string, args ...string) error {
 		return sentinel
 	}
-	err := launch(context.Background(), "darwin", "https://router.local", run)
+	err := launch(t.Context(), "darwin", "https://router.local", run)
 	if !errors.Is(err, sentinel) {
 		t.Errorf("launch error = %v, want %v", err, sentinel)
 	}

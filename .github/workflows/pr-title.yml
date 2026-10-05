@@ -1,0 +1,36 @@
+name: PR title
+
+# PRs are squash-merged with the PR title as the commit subject, and the
+# release workflow picks the next version from those subjects, so the title
+# must be a Conventional Commit. "edited" reruns the check after a retitle.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  conventional:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the title is a Conventional Commit
+        env:
+          # Passed through env, never interpolated into the script: the
+          # title is attacker-controlled text.
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          # Keep the feat pattern in sync with the version bump in release.yml.
+          pattern='^(feat|fix|perf|refactor|docs|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: [^ ].*$'
+          if printf '%s\n' "$TITLE" | grep -Eq "$pattern"; then
+            echo "ok: $TITLE"
+            exit 0
+          fi
+          {
+            echo "::error title=PR title::not a Conventional Commit"
+            printf 'title: %s\n' "$TITLE"
+            echo "Use <type>[(scope)][!]: <summary>, with type one of"
+            echo "feat fix perf refactor docs test build ci chore revert."
+            echo "feat: bumps the minor version on release, everything else the patch."
+          } >&2
+          exit 1

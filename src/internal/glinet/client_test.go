@@ -1,11 +1,11 @@
 package glinet
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -76,7 +76,7 @@ func TestPrintable(t *testing.T) {
 
 func TestLoginWrongPassword(t *testing.T) {
 	c := NewClient(glinettest.NewRouter(t, nil).URL)
-	err := c.Login(context.Background(), "root", "wrong")
+	err := c.Login(t.Context(), "root", "wrong")
 	if err == nil || !strings.Contains(err.Error(), "Access denied") {
 		t.Fatalf("Login() error = %v, want Access denied", err)
 	}
@@ -88,7 +88,7 @@ func TestUptime(t *testing.T) {
 			return map[string]any{"system": map[string]any{"uptime": 90061.5}}
 		},
 	})
-	got, err := c.Uptime(context.Background())
+	got, err := c.Uptime(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestTunnels(t *testing.T) {
 			]}`)
 		},
 	})
-	got, err := c.Tunnels(context.Background())
+	got, err := c.Tunnels(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestSetTunnel(t *testing.T) {
 			return map[string]any{"tunnel_id": 2001}
 		},
 	})
-	if err := c.SetTunnel(context.Background(), 2001, true); err != nil {
+	if err := c.SetTunnel(t.Context(), 2001, true); err != nil {
 		t.Fatal(err)
 	}
 	if want := `{"enabled":true,"tunnel_id":2001}`; gotArgs != want {
@@ -137,7 +137,7 @@ func TestSetTunnel(t *testing.T) {
 
 func TestCallError(t *testing.T) {
 	c := loggedIn(t, nil)
-	_, err := c.Tunnels(context.Background())
+	_, err := c.Tunnels(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "vpn-client.get_status: Method not found") {
 		t.Fatalf("Tunnels() error = %v, want method not found", err)
 	}
@@ -147,12 +147,13 @@ func TestLogout(t *testing.T) {
 	c := loggedIn(t, map[string]glinettest.Handler{
 		"vpn-client.get_status": func(json.RawMessage) any { return map[string]any{"status_list": []any{}} },
 	})
+	old := c.sid
 	c.Logout()
 	if c.sid != "" {
 		t.Errorf("sid = %q after Logout, want empty", c.sid)
 	}
-	c.sid = glinettest.SID // replay the old session ID
-	if _, err := c.Tunnels(context.Background()); err == nil || !strings.Contains(err.Error(), "Access denied") {
+	c.sid = old // replay the old session ID
+	if _, err := c.Tunnels(t.Context()); err == nil || !strings.Contains(err.Error(), "Access denied") {
 		t.Fatalf("Tunnels() after Logout error = %v, want Access denied", err)
 	}
 }
@@ -164,7 +165,7 @@ func TestRedirectNotFollowed(t *testing.T) {
 	redirect := httptest.NewServer(http.RedirectHandler(other.URL+"/rpc", http.StatusTemporaryRedirect))
 	t.Cleanup(redirect.Close)
 
-	err := NewClient(redirect.URL).Login(context.Background(), "root", testPassword)
+	err := NewClient(redirect.URL).Login(t.Context(), "root", testPassword)
 	if err == nil || !strings.Contains(err.Error(), "307") {
 		t.Fatalf("Login() error = %v, want unexpected HTTP status 307", err)
 	}
@@ -177,8 +178,66 @@ func TestRedirectNotFollowed(t *testing.T) {
 func loggedIn(t *testing.T, calls map[string]glinettest.Handler) *Client {
 	t.Helper()
 	c := NewClient(glinettest.NewRouter(t, calls).URL)
-	if err := c.Login(context.Background(), "root", testPassword); err != nil {
+	if err := c.Login(t.Context(), "root", testPassword); err != nil {
 		t.Fatalf("Login(): %v", err)
 	}
 	return c
+}
+
+// rawRouter answers each JSON-RPC method with the body reply returns for it,
+// so tests can send replies the fake router never would.
+func rawRouter(t *testing.T, reply func(method string) string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(reply(req.Method)))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// challenge is a valid challenge reply; alg is the crypt scheme it names.
+func challenge(alg int) string {
+	return `{"jsonrpc":"2.0","id":1,"result":{"alg":` + strconv.Itoa(alg) +
+		`,"salt":"` + testSalt + `","nonce":"` + testNonce + `","hash-method":"sha256"}}`
+}
+
+func TestLoginErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr string
+	}{
+		{"malformed response", rawRouter(t, func(string) string { return "<html>not json" }), "challenge: decode response"},
+		{"unsupported algorithm", rawRouter(t, func(string) string { return challenge(2) }), "login: unsupported password algorithm 2"},
+		{"no session ID", rawRouter(t, func(m string) string {
+			if m == "challenge" {
+				return challenge(1)
+			}
+			return `{"jsonrpc":"2.0","id":1,"result":{"sid":""}}`
+		}), "router returned no session ID"},
+		{"result of the wrong type", rawRouter(t, func(m string) string {
+			if m == "challenge" {
+				return `{"jsonrpc":"2.0","id":1,"result":"challenge"}`
+			}
+			return "{}"
+		}), "challenge: decode result"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := NewClient(tt.url)
+			err := c.Login(t.Context(), "root", testPassword)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Login() error = %v, want it to contain %q", err, tt.wantErr)
+			}
+			if c.sid != "" {
+				t.Errorf("sid = %q after a failed login, want empty", c.sid)
+			}
+		})
+	}
 }

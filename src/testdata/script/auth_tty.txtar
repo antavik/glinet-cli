@@ -1,0 +1,12 @@
+# auth on a terminal: prompt on stderr, input read from the terminal.
+
+[windows] skip 'needs a pseudo-terminal'
+
+env GLINET_PASSWORD=
+ttyin -stdin password.txt
+exec glinet-cli auth
+stderr '^Password for root@http://127\.0\.0\.1:\d+: $'
+stdout '^Logged in. Password saved to the OS keychain.$'
+
+-- password.txt --
+goodlife
