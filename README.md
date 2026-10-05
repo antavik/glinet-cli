@@ -217,6 +217,14 @@ against the release's `checksums.txt`. The tap update needs the
 write access to the tap); without it releases still publish and the
 Homebrew step skips itself.
 
+The version bump reads commit subjects, so PRs are squash-merged and the PR
+title becomes the subject. The title must be a
+[Conventional Commit](https://www.conventionalcommits.org/):
+`<type>[(scope)][!]: <summary>`, with type one of `feat fix perf refactor
+docs test build ci chore revert`, e.g. `feat(vpn): add restart command`. The
+`PR title` workflow checks it. Title a PR that bundles features `feat: …`,
+not `release: vX.Y.Z`: the version comes from the type, not the title text.
+
 To release a specific version by hand, tag the commit on `main` and push the
 tag: `git tag -a v1.2.3 -m "glinet-cli 1.2.3" && git push origin v1.2.3`.
 The next workflow run reuses a tag that already sits at HEAD. For a fully
