@@ -20,7 +20,7 @@ exits 2 glinet-cli reboot
 stderr '^glinet-cli: unknown command "reboot"$'
 stderr '^Usage: glinet-cli \[flags\] <command>$'
 exits 2 glinet-cli vpn on
-stderr '^glinet-cli: vpn on needs one tunnel: <id\|name\|all>$'
+stderr '^glinet-cli: expected one tunnel ID or name, or -all$'
 
 # Flag errors.
 exits 2 glinet-cli -timeout 0 status
@@ -31,7 +31,7 @@ stderr '^glinet-cli: flag provided but not defined: -bogus$'
 # Global flags also work after the command and its operands.
 exits 2 glinet-cli status -timeout 0
 stderr '^glinet-cli: -timeout must be positive$'
-exits 2 glinet-cli vpn on all -bogus
+exits 2 glinet-cli vpn on -all -bogus
 stderr '^glinet-cli: flag provided but not defined: -bogus$'
 
 # Version.
@@ -45,14 +45,14 @@ stdout '^glinet-cli dev$'
 Usage: glinet-cli [flags] <command>
 
 Commands:
-  auth [login]               check password and save it in the OS keychain
-  auth logout                remove the saved password
-  status                     show router uptime
-  vpn [status]               list VPN tunnels
-  vpn on <id|name|all>       turn VPN tunnel(s) on
-  vpn off <id|name|all>      turn VPN tunnel(s) off
-  vpn restart <id|name|all>  restart VPN tunnel(s) (off, then on)
-  web                        open the router web interface in browser
+  auth [login]                  check password and save it in the OS keychain
+  auth logout                   remove the saved password
+  status                        show router uptime
+  vpn [status]                  list VPN tunnels
+  vpn on <id|name> | -all       turn VPN tunnel(s) on
+  vpn off <id|name> | -all      turn VPN tunnel(s) off
+  vpn restart <id|name> | -all  restart VPN tunnel(s) (off, then on)
+  web                           open the router web interface in browser
 
 Environment:
   GLINET_PASSWORD  router password; overrides the saved one

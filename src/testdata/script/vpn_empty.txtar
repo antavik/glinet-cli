@@ -2,7 +2,7 @@
 
 exec glinet-cli vpn
 stdout '^No VPN tunnels configured.$'
-exec glinet-cli vpn on all
+exec glinet-cli vpn on -all
 stdout '^No VPN tunnels configured.$'
 
 -- tunnels.json --
