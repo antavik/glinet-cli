@@ -7,6 +7,12 @@ cmp stdout list.txt
 exec glinet-cli vpn status
 cmp stdout list.txt
 
+# -wait on a tunnel stuck connecting: exit 1 once -timeout ends.
+exits 1 glinet-cli vpn on 2003 -wait -timeout 2s
+stdout '^Travel/WG: already on$'
+! stdout 'connected$'
+stderr '^glinet-cli: Travel/WG: .*context deadline exceeded$'
+
 # Off by name, any case; the next list shows it.
 exec glinet-cli vpn off home/wg
 cmp stdout off-home.txt
