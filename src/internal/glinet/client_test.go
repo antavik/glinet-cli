@@ -1,7 +1,9 @@
 package glinet
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -75,7 +77,7 @@ func TestPrintable(t *testing.T) {
 }
 
 func TestLoginWrongPassword(t *testing.T) {
-	c := NewClient(glinettest.NewRouter(t, nil).URL)
+	c := NewClient(glinettest.NewRouter(t, nil).URL, false)
 	err := c.Login(t.Context(), "root", "wrong")
 	if err == nil || !strings.Contains(err.Error(), "Access denied") {
 		t.Fatalf("Login() error = %v, want Access denied", err)
@@ -165,7 +167,7 @@ func TestRedirectNotFollowed(t *testing.T) {
 	redirect := httptest.NewServer(http.RedirectHandler(other.URL+"/rpc", http.StatusTemporaryRedirect))
 	t.Cleanup(redirect.Close)
 
-	err := NewClient(redirect.URL).Login(t.Context(), "root", testPassword)
+	err := NewClient(redirect.URL, false).Login(t.Context(), "root", testPassword)
 	if err == nil || !strings.Contains(err.Error(), "307") {
 		t.Fatalf("Login() error = %v, want unexpected HTTP status 307", err)
 	}
@@ -177,7 +179,13 @@ func TestRedirectNotFollowed(t *testing.T) {
 // loggedIn returns a client logged in to a fake router with the given handlers.
 func loggedIn(t *testing.T, calls map[string]glinettest.Handler) *Client {
 	t.Helper()
-	c := NewClient(glinettest.NewRouter(t, calls).URL)
+	return loggedInWait(t, calls, false)
+}
+
+// loggedInWait returns a logged-in client, with wait set from the router.
+func loggedInWait(t *testing.T, calls map[string]glinettest.Handler, wait bool) *Client {
+	t.Helper()
+	c := NewClient(glinettest.NewRouter(t, calls).URL, wait)
 	if err := c.Login(t.Context(), "root", testPassword); err != nil {
 		t.Fatalf("Login(): %v", err)
 	}
@@ -230,13 +238,135 @@ func TestLoginErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := NewClient(tt.url)
+			c := NewClient(tt.url, false)
 			err := c.Login(t.Context(), "root", testPassword)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("Login() error = %v, want it to contain %q", err, tt.wantErr)
 			}
 			if c.sid != "" {
 				t.Errorf("sid = %q after a failed login, want empty", c.sid)
+			}
+		})
+	}
+}
+
+func TestWaitTask(t *testing.T) {
+	// One incomplete poll keeps the test under about half a second.
+	c := loggedInWait(t, map[string]glinettest.Handler{
+		"vpn-client.set_tunnel": func(json.RawMessage) any {
+			return glinettest.Task{Result: map[string]any{"enabled": true, "tunnel_id": 2001}, Polls: 1}
+		},
+	}, true)
+	var res map[string]any
+	if err := c.call(t.Context(), "vpn-client", "set_tunnel", map[string]any{"enabled": true, "tunnel_id": 2001}, &res); err != nil {
+		t.Fatalf("call() error = %v", err)
+	}
+	want := map[string]any{"enabled": true, "tunnel_id": float64(2001)}
+	if !reflect.DeepEqual(res, want) {
+		t.Errorf("call() result = %v, want %v", res, want)
+	}
+}
+
+// SetTunnel passes a nil result target: an async task completes without
+// touching the target.
+func TestWaitTaskNilTarget(t *testing.T) {
+	c := loggedInWait(t, map[string]glinettest.Handler{
+		"vpn-client.set_tunnel": func(json.RawMessage) any {
+			return glinettest.Task{Result: map[string]any{"tunnel_id": 2001}}
+		},
+	}, true)
+	if err := c.SetTunnel(t.Context(), 2001, true); err != nil {
+		t.Fatalf("SetTunnel() error = %v, want nil", err)
+	}
+}
+
+func TestWaitTaskError(t *testing.T) {
+	c := loggedInWait(t, map[string]glinettest.Handler{
+		"vpn-client.set_tunnel": func(json.RawMessage) any {
+			return glinettest.Task{Error: &glinettest.RPCError{Code: -32000, Message: "tunnel failed"}}
+		},
+	}, true)
+	err := c.call(t.Context(), "vpn-client", "set_tunnel", map[string]any{"enabled": true, "tunnel_id": 2001}, nil)
+	if err == nil || !strings.Contains(err.Error(), "vpn-client.set_tunnel") || !strings.Contains(err.Error(), "tunnel failed") {
+		t.Fatalf("call() error = %v, want it wrapped with module.function and the task error", err)
+	}
+}
+
+func TestWaitCancelled(t *testing.T) {
+	c := loggedInWait(t, map[string]glinettest.Handler{
+		"vpn-client.set_tunnel": func(json.RawMessage) any {
+			// Polls: 1000 never completes; the short deadline must stop the wait.
+			return glinettest.Task{Result: map[string]any{"ok": true}, Polls: 1000}
+		},
+	}, true)
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := c.call(ctx, "vpn-client", "set_tunnel", map[string]any{"enabled": true, "tunnel_id": 2001}, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("call() error = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("call() took %v, want well under 2s", elapsed)
+	}
+}
+
+// wait=true on a synchronous result decodes it directly, with no polling.
+func TestWaitSyncCall(t *testing.T) {
+	c := loggedInWait(t, map[string]glinettest.Handler{
+		"system.get_status": func(json.RawMessage) any {
+			return map[string]any{"system": map[string]any{"uptime": 1.5}}
+		},
+	}, true)
+	got, err := c.Uptime(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 1500 * time.Millisecond; got != want {
+		t.Errorf("Uptime() = %v, want %v", got, want)
+	}
+}
+
+// wait=false passes an async reply through untouched; the task method is
+// never hit (its absence would have surfaced as an error in the router).
+func TestWaitOffPassthrough(t *testing.T) {
+	c := loggedInWait(t, map[string]glinettest.Handler{
+		"vpn-client.get_status": func(json.RawMessage) any {
+			return glinettest.Task{Result: map[string]any{"ok": true}, Polls: 1000}
+		},
+	}, false)
+	var res any
+	if err := c.call(t.Context(), "vpn-client", "get_status", nil, &res); err != nil {
+		t.Fatalf("call() error = %v", err)
+	}
+	if want := map[string]any{"id": float64(1)}; !reflect.DeepEqual(res, want) {
+		t.Errorf("call() result = %v, want the raw task handle %v", res, want)
+	}
+}
+
+// Results whose shape is not a task handle pass through untouched even with
+// wait=true, without polling.
+func TestWaitDetectionShapes(t *testing.T) {
+	tests := []struct {
+		name   string
+		result any
+	}{
+		{"string id", map[string]any{"id": "1"}},
+		{"extra key", map[string]any{"id": 1, "x": 2}},
+		{"scalar", 5},
+		{"array", []any{1}},
+		{"null", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := loggedInWait(t, map[string]glinettest.Handler{
+				"mod.fn": func(json.RawMessage) any { return tt.result },
+			}, true)
+			// A hang would hit the deadline; a correct pass-through is instant.
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			if err := c.call(ctx, "mod", "fn", nil, nil); err != nil {
+				t.Fatalf("call() error = %v, want nil", err)
 			}
 		})
 	}

@@ -66,3 +66,5 @@ Flags:
     	router username (env GLINET_USER) (default "root")
   -version
     	print version and exit
+  -wait
+    	wait for the router to finish async operations

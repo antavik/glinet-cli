@@ -121,6 +121,9 @@ func TestParseCommandLine(t *testing.T) {
 		{"vpn", "on", "-all", "-timeout=5s", "-url", "http://x"},
 		{"-version"},
 		{"vpn", "-version"},
+		{"-wait", "vpn", "restart", "-all"},
+		{"vpn", "restart", "-all", "-wait"},
+		{"vpn", "on", "2001", "--wait"},
 	}
 	for _, args := range valid {
 		var cfg config.Config
@@ -145,12 +148,20 @@ func TestParseCommandLine(t *testing.T) {
 		{"web", "extra"},
 		{"vpn", "on", "-all", "-bogus"},
 		{"vpn", "-timeout", "0s"},
-		{"-wait", "status"},
+		{"-wait=maybe", "status"},
 	}
 	for _, args := range invalid {
 		var cfg config.Config
 		if action, err := parseCommandLine(newFlagSet(&cfg), &cfg, args); action != nil || err == nil {
 			t.Errorf("parseCommandLine(%q) = action, want error", args)
+		}
+	}
+
+	// -wait reaches cfg wherever it stands on the command line.
+	for _, args := range [][]string{{"-wait", "status"}, {"vpn", "restart", "2001", "-wait"}} {
+		var cfg config.Config
+		if _, err := parseCommandLine(newFlagSet(&cfg), &cfg, args); err != nil || !cfg.Wait {
+			t.Errorf("parseCommandLine(%q): cfg.Wait = %v, err = %v; want true, nil", args, cfg.Wait, err)
 		}
 	}
 

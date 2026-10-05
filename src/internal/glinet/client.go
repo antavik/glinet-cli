@@ -33,12 +33,15 @@ type Client struct {
 	url  string
 	http *http.Client
 	sid  string
+	wait bool
 }
 
 // NewClient returns a client for the router at baseURL, e.g. "http://192.168.8.1".
-func NewClient(baseURL string) *Client {
+// When wait is true, calls wait for async operations to finish.
+func NewClient(baseURL string, wait bool) *Client {
 	return &Client{
-		url: strings.TrimRight(baseURL, "/") + "/rpc",
+		url:  strings.TrimRight(baseURL, "/") + "/rpc",
+		wait: wait,
 		http: &http.Client{
 			// A followed 307/308 redirect would resend the login hash or
 			// session ID to whatever host the redirect names.
@@ -79,6 +82,9 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 
 // logoutTimeout bounds Logout. Routers answer in milliseconds on a LAN.
 const logoutTimeout = 3 * time.Second
+
+// taskPollInterval is how long call waits between polls of an unfinished task.
+const taskPollInterval = 500 * time.Millisecond
 
 // Logout ends the session so a captured session ID stops working. It is best
 // effort: the router drops a session after 5 idle minutes anyway. Like Close,
@@ -135,15 +141,83 @@ func loginHash(username, password string, alg int, salt, nonce, hashMethod strin
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// call invokes module.function using the session from Login.
+// call invokes module.function using the session from Login. If the router
+// answers asynchronously with a task handle and c.wait is set, it polls the
+// task until it finishes and decodes its result.
 func (c *Client) call(ctx context.Context, module, function string, args, result any) error {
 	if args == nil {
 		args = struct{}{}
 	}
-	if err := c.rpc(ctx, "call", []any{c.sid, module, function, args}, result); err != nil {
+	var raw json.RawMessage
+	if err := c.rpc(ctx, "call", []any{c.sid, module, function, args}, &raw); err != nil {
 		return fmt.Errorf("%s.%s: %w", module, function, err)
 	}
+	if c.wait {
+		if id, ok := taskID(raw); ok {
+			var err error
+			if raw, err = c.awaitTask(ctx, module, function, id); err != nil {
+				return err // awaitTask returns module.function-wrapped errors
+			}
+		}
+	}
+	if result == nil {
+		return nil
+	}
+	if len(raw) == 0 {
+		raw = json.RawMessage("null")
+	}
+	if err := json.Unmarshal(raw, result); err != nil {
+		return fmt.Errorf("%s.%s: decode result: %w", module, function, err)
+	}
 	return nil
+}
+
+// taskID reports whether raw is an async task handle: a JSON object whose
+// only key is "id" and whose value is an integer. Anything else, including
+// non-integer numbers like 1.5, is a plain result, not a task.
+func taskID(raw json.RawMessage) (int, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil || len(obj) != 1 {
+		return 0, false
+	}
+	idRaw, ok := obj["id"]
+	if !ok {
+		return 0, false
+	}
+	id, err := json.Number(idRaw.String()).Int64()
+	if err != nil {
+		return 0, false
+	}
+	return int(id), true
+}
+
+// awaitTask polls the "task" method until it completes and returns the
+// result it carries. The router answers an async call with {"id": N} and
+// runs it in the background; polling "task" with that id replies
+// {"complete": false} until done, then {"complete": true} with either a
+// "result" or an "error".
+func (c *Client) awaitTask(ctx context.Context, module, function string, id int) (json.RawMessage, error) {
+	for {
+		var reply struct {
+			Complete bool            `json:"complete"`
+			Result   json.RawMessage `json:"result"`
+			Error    *rpcError       `json:"error"`
+		}
+		if err := c.rpc(ctx, "task", map[string]any{"id": id}, &reply); err != nil {
+			return nil, fmt.Errorf("%s.%s: task %d: %w", module, function, id, err)
+		}
+		if reply.Complete {
+			if reply.Error != nil {
+				return nil, fmt.Errorf("%s.%s: %w", module, function, reply.Error)
+			}
+			return reply.Result, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%s.%s: %w", module, function, ctx.Err())
+		case <-time.After(taskPollInterval):
+		}
+	}
 }
 
 type rpcError struct {

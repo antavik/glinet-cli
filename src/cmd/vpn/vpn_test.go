@@ -123,7 +123,7 @@ var (
 func fixture(t *testing.T, tunnels ...glinettest.Tunnel) (*glinet.Client, *glinettest.VPN) {
 	t.Helper()
 	vpn := glinettest.NewVPN(tunnels...)
-	c := glinet.NewClient(glinettest.NewRouter(t, vpn.Handlers()).URL)
+	c := glinet.NewClient(glinettest.NewRouter(t, vpn.Handlers()).URL, false)
 	if err := c.Login(t.Context(), glinettest.User, glinettest.Password); err != nil {
 		t.Fatal(err)
 	}

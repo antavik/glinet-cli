@@ -65,7 +65,7 @@ func login(ctx context.Context, cfg config.Config, stdio cmd.IO) error {
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
 
-	client := glinet.NewClient(cfg.URL)
+	client := glinet.NewClient(cfg.URL, false)
 	if err := client.Login(ctx, cfg.User, password); err != nil {
 		return err
 	}

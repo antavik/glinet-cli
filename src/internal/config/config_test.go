@@ -16,16 +16,19 @@ func TestRegisterFlags(t *testing.T) {
 	if err := fs.Parse([]string{"-timeout", "3s"}); err != nil {
 		t.Fatal(err)
 	}
-	want := Config{URL: "https://router.lan", User: "root", Timeout: 3 * time.Second}
+	want := Config{URL: "https://router.lan", User: "root", Timeout: 3 * time.Second, Wait: false}
 	if cfg != want {
 		t.Fatalf("defaults: got %+v, want %+v", cfg, want)
 	}
 
-	if err := fs.Parse([]string{"-url", "http://10.0.0.1", "-user", "admin"}); err != nil {
+	if err := fs.Parse([]string{"-url", "http://10.0.0.1", "-user", "admin", "-wait"}); err != nil {
 		t.Fatal(err)
 	}
 	if cfg.URL != "http://10.0.0.1" || cfg.User != "admin" {
 		t.Fatalf("flags: got %+v, want url and user from flags", cfg)
+	}
+	if !cfg.Wait {
+		t.Errorf("Wait = %v after -wait, want true", cfg.Wait)
 	}
 }
 
