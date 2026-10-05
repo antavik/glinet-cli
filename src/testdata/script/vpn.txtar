@@ -13,9 +13,26 @@ cmp stdout off-home.txt
 exec glinet-cli vpn
 stdout '^2001  Home/WG    off      -$'
 
-# On all turns on only what is off.
-exec glinet-cli vpn on all
+# Target "all" is a name now: no tunnel matches it.
+exits 1 glinet-cli vpn on all
+! stdout .
+stderr '^glinet-cli: no VPN tunnel matches "all"$'
+
+# Bad combinations are usage errors before any router call.
+exits 2 glinet-cli vpn on -all 2001
+stderr '^glinet-cli: '
+exits 2 glinet-cli vpn on -bogus
+stderr '^glinet-cli: flag provided but not defined: -bogus$'
+
+# -all turns on only what is off.
+exec glinet-cli vpn on -all
 cmp stdout on-all.txt
+
+# Restart -all.
+exec glinet-cli vpn restart -all
+cmp stdout restart-all.txt
+exec glinet-cli vpn
+cmp stdout list-all-on.txt
 
 # Restart by ID.
 exec glinet-cli vpn restart 2003
@@ -33,9 +50,18 @@ ID    NAME       ENABLED  STATUS
 2001  Home/WG    on       connected
 2002  Work/OVPN  off      -
 2003  Travel/WG  on       connecting
+-- list-all-on.txt --
+ID    NAME       ENABLED  STATUS
+2001  Home/WG    on       connected
+2002  Work/OVPN  on       connected
+2003  Travel/WG  on       connected
 -- off-home.txt --
 Home/WG: off
 -- on-all.txt --
 Home/WG: on
 Work/OVPN: on
 Travel/WG: already on
+-- restart-all.txt --
+Home/WG: restarted
+Work/OVPN: restarted
+Travel/WG: restarted

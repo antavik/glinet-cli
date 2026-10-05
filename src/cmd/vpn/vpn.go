@@ -5,8 +5,10 @@ package vpn
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,9 +23,9 @@ func init() {
 		Name: "vpn",
 		Usage: []string{
 			"vpn [status]\tlist VPN tunnels",
-			"vpn on <id|name|all>\tturn VPN tunnel(s) on",
-			"vpn off <id|name|all>\tturn VPN tunnel(s) off",
-			"vpn restart <id|name|all>\trestart VPN tunnel(s) (off, then on)",
+			"vpn on <id|name> | -all\tturn VPN tunnel(s) on",
+			"vpn off <id|name> | -all\tturn VPN tunnel(s) off",
+			"vpn restart <id|name> | -all\trestart VPN tunnel(s) (off, then on)",
 		},
 		Parse: parse,
 	})
@@ -33,18 +35,48 @@ func parse(args []string) cmd.Action {
 	switch {
 	case len(args) == 0, len(args) == 1 && args[0] == "status":
 		return cmd.WithClient(printTunnels)
-	case len(args) == 2 && (args[0] == "on" || args[0] == "off"):
-		target, enable := args[1], args[0] == "on"
+	case len(args) >= 1 && (args[0] == "on" || args[0] == "off"):
+		target, all, ok := setTarget(args[1:])
+		if !ok {
+			return nil
+		}
+		enable := args[0] == "on"
 		return cmd.WithClient(func(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
-			return setTunnels(ctx, c, stdio.Out, target, enable)
+			return setTunnels(ctx, c, stdio.Out, target, all, enable)
 		})
-	case len(args) == 2 && args[0] == "restart":
-		target := args[1]
+	case len(args) >= 1 && args[0] == "restart":
+		target, all, ok := setTarget(args[1:])
+		if !ok {
+			return nil
+		}
 		return cmd.WithClient(func(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
-			return restartTunnels(ctx, c, stdio.Out, target)
+			return restartTunnels(ctx, c, stdio.Out, target, all)
 		})
 	}
 	return nil
+}
+
+// setTarget parses the target of "on", "off" or "restart": one positional
+// tunnel ID or name, or -all for every tunnel. It returns ok=false for
+// anything else and prints the reason to stderr, prefixed like the errors
+// main prints, so a usage error names its cause above the help text.
+func setTarget(args []string) (target string, all bool, ok bool) {
+	fs := flag.NewFlagSet("", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	allFlag := fs.Bool("all", false, "target every tunnel")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, "glinet-cli:", err)
+		return "", false, false
+	}
+	target, all, n := fs.Arg(0), *allFlag, fs.NArg()
+	switch {
+	case all && n == 0:
+		return "", true, true
+	case !all && n == 1:
+		return target, false, true
+	}
+	fmt.Fprintln(os.Stderr, "glinet-cli: expected one tunnel ID or name, or -all")
+	return "", false, false
 }
 
 func printTunnels(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
@@ -65,15 +97,15 @@ func printTunnels(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
 	return w.Flush()
 }
 
-// setTunnels turns the tunnels matching target on or off, skipping those
-// already in that state. It keeps going after a failure and reports all
-// errors, and stops early once ctx is cancelled.
-func setTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target string, enable bool) error {
+// setTunnels turns the tunnels matching target on or off, or every tunnel
+// when all is set, skipping those already in that state. It keeps going after
+// a failure and reports all errors, and stops early once ctx is cancelled.
+func setTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target string, all, enable bool) error {
 	tunnels, err := c.Tunnels(ctx)
 	if err != nil {
 		return err
 	}
-	selected, err := selectTunnels(tunnels, target)
+	selected, err := selectTunnels(tunnels, target, all)
 	if err != nil {
 		return err
 	}
@@ -104,15 +136,16 @@ func setTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target strin
 }
 
 // restartTunnels turns each tunnel matching target off, then on, one tunnel at
-// a time, ignoring the current state, so a disabled tunnel ends up enabled. A
-// tunnel whose off fails is not turned on. It keeps going after a failure and
-// reports all errors, and stops early once ctx is cancelled.
-func restartTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target string) error {
+// a time, or every tunnel when all is set, ignoring the current state, so a
+// disabled tunnel ends up enabled. A tunnel whose off fails is not turned on.
+// It keeps going after a failure and reports all errors, and stops early once
+// ctx is cancelled.
+func restartTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target string, all bool) error {
 	tunnels, err := c.Tunnels(ctx)
 	if err != nil {
 		return err
 	}
-	selected, err := selectTunnels(tunnels, target)
+	selected, err := selectTunnels(tunnels, target, all)
 	if err != nil {
 		return err
 	}
@@ -142,11 +175,12 @@ func restartTunnels(ctx context.Context, c *glinet.Client, w io.Writer, target s
 	return errors.Join(errs...)
 }
 
-// selectTunnels returns all tunnels for "all", otherwise the one tunnel whose
-// ID or name (case-insensitive) equals target. IDs are unique, so an ID match
-// wins over a tunnel named like another tunnel's ID.
-func selectTunnels(tunnels []glinet.Tunnel, target string) ([]glinet.Tunnel, error) {
-	if target == "all" {
+// selectTunnels returns every tunnel when all is set, otherwise the one
+// tunnel whose ID or name (case-insensitive) equals target. IDs are unique, so
+// an ID match wins over a tunnel named like another tunnel's ID. A tunnel
+// named "all" matches by name like any other.
+func selectTunnels(tunnels []glinet.Tunnel, target string, all bool) ([]glinet.Tunnel, error) {
+	if all {
 		return tunnels, nil
 	}
 	if i := slices.IndexFunc(tunnels, func(t glinet.Tunnel) bool { return strconv.Itoa(t.ID) == target }); i >= 0 {
