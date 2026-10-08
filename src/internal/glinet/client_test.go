@@ -82,18 +82,59 @@ func TestLoginWrongPassword(t *testing.T) {
 	}
 }
 
-func TestUptime(t *testing.T) {
+func TestStatus(t *testing.T) {
 	c := loggedIn(t, map[string]glinettest.Handler{
 		"system.get_status": func(json.RawMessage) any {
-			return map[string]any{"system": map[string]any{"uptime": 90061.5}}
+			return map[string]any{"system": map[string]any{
+				"uptime":       90061.5,
+				"load_average": [3]float64{2.01, 0.89, 0.33},
+				"memory_total": 126943232,
+				"memory_free":  78471168,
+				"flash_total":  106278912,
+				"flash_free":   105918464,
+			}}
 		},
 	})
-	got, err := c.Uptime(t.Context())
+	got, err := c.Status(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := 25*time.Hour + time.Minute + 1500*time.Millisecond; got != want {
-		t.Errorf("Uptime() = %v, want %v", got, want)
+	want := SystemStatus{
+		Uptime:      25*time.Hour + time.Minute + 1500*time.Millisecond,
+		LoadAverage: [3]float64{2.01, 0.89, 0.33},
+		MemoryTotal: 126943232,
+		MemoryFree:  78471168,
+		FlashTotal:  106278912,
+		FlashFree:   105918464,
+	}
+	if got != want {
+		t.Errorf("Status() = %+v, want %+v", got, want)
+	}
+}
+
+func TestInfo(t *testing.T) {
+	c := loggedIn(t, map[string]glinettest.Handler{
+		"system.get_info": func(json.RawMessage) any {
+			return map[string]any{
+				"model":            "xe300",
+				"mac":              "94:83:C4:0C:74:9A",
+				"firmware_version": "4.9.0",
+				"board_info":       map[string]any{"hostname": "GL\u001b[2J-AXT1800"},
+			}
+		},
+	})
+	got, err := c.Info(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := DeviceInfo{
+		Model:           "xe300",
+		MAC:             "94:83:C4:0C:74:9A",
+		FirmwareVersion: "4.9.0",
+		Hostname:        "GL?[2J-AXT1800", // ESC sanitized by printable()
+	}
+	if got != want {
+		t.Errorf("Info() = %+v, want %+v", got, want)
 	}
 }
 

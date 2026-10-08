@@ -32,10 +32,11 @@ func parse(fs *flag.FlagSet, args []string) (cmd.Action, error) {
 }
 
 func printUptime(ctx context.Context, c *glinet.Client, stdio cmd.IO) error {
-	uptime, err := c.Uptime(ctx)
+	st, err := c.Status(ctx)
 	if err != nil {
 		return err
 	}
+	uptime := st.Uptime
 	fmt.Fprintln(stdio.Out, "Uptime:", formatUptime(uptime))
 	return nil
 }
