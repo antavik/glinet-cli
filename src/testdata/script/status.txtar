@@ -1,5 +1,17 @@
-# status: router uptime.
+# status: happy path, exact output.
 
 exec glinet-cli status
-stdout '^Uptime: 1d 1h 1m$'
+cmp stdout want.txt
 ! stderr .
+
+-- want.txt --
+Model: mt3000
+Hostname: GL-MT3000-49a
+MAC: 94:83:C4:0C:74:9A
+Firmware: 4.9.0 (update available: 4.10.0)
+Uptime: 1d 1h 1m
+Load: 0.12 0.34 0.56
+Memory: 45% (230 MiB / 512 MiB)
+Flash: 12% (15 MiB / 128 MiB)
+Ethernet: dhcp 192.168.1.5 gw 192.168.1.1 dns 1.1.1.1,8.8.8.8 (connected)
+VPN: Home/WG connected, Travel/WG connecting

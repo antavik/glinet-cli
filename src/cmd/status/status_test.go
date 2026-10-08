@@ -21,3 +21,23 @@ func TestFormatUptime(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatBytes(t *testing.T) {
+	tests := []struct {
+		in   uint64
+		want string
+	}{
+		{0, "0 B"},
+		{1023, "1023 B"},
+		{1024, "1 KiB"},
+		{1536, "2 KiB"},
+		{1048576, "1 MiB"},
+		{241172480, "230 MiB"},
+		{1073741824, "1.0 GiB"},
+	}
+	for _, tt := range tests {
+		if got := formatBytes(tt.in); got != tt.want {
+			t.Errorf("formatBytes(%d) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

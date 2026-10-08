@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/rogpeppe/go-internal/testscript"
 	"github.com/zalando/go-keyring"
@@ -37,6 +38,15 @@ var defaultTunnels = []glinettest.Tunnel{
 	{ID: 2003, Name: "Travel/WG", Enabled: true, Status: 2},
 }
 
+// handlerOverrides comes from an optional handlers.json in a script's work
+// dir, alongside tunnels.json. fail makes the named methods return an error
+// at once; block makes them sleep first, so a call made against a short
+// -timeout dies on the deadline instead of on the router's error.
+type handlerOverrides struct {
+	Fail  []string `json:"fail"`
+	Block []string `json:"block"`
+}
+
 // TestScript runs testdata/script, each script against its own fake router.
 // "exits <code> <cmd> [args...]" checks an exact exit code.
 func TestScript(t *testing.T) {
@@ -55,9 +65,60 @@ func TestScript(t *testing.T) {
 			case !errors.Is(err, fs.ErrNotExist):
 				return err
 			}
+			var overrides handlerOverrides
+			data, err = os.ReadFile(filepath.Join(env.WorkDir, "handlers.json"))
+			switch {
+			case err == nil:
+				if err := json.Unmarshal(data, &overrides); err != nil {
+					return err
+				}
+			case !errors.Is(err, fs.ErrNotExist):
+				return err
+			}
 			handlers := glinettest.NewVPN(tunnels...).Handlers()
+			handlers["system.get_info"] = func(json.RawMessage) any {
+				return map[string]any{
+					"model":            "mt3000",
+					"mac":              "94:83:C4:0C:74:9A",
+					"firmware_version": "4.9.0",
+					"board_info":       map[string]any{"hostname": "GL-MT3000-49a"},
+				}
+			}
 			handlers["system.get_status"] = func(json.RawMessage) any {
-				return map[string]any{"system": map[string]any{"uptime": 90061.5}}
+				return map[string]any{"system": map[string]any{
+					"uptime":       90061.5,
+					"load_average": []float64{0.12, 0.34, 0.56},
+					"memory_total": 536870912,
+					"memory_free":  295698432,
+					"flash_total":  134217728,
+					"flash_free":   118489088,
+				}}
+			}
+			handlers["upgrade.check_firmware_online"] = func(json.RawMessage) any {
+				return map[string]any{"current_version": "4.9.0", "version_new": "4.10.0"}
+			}
+			handlers["cable.get_status"] = func(json.RawMessage) any {
+				return map[string]any{
+					"mode":     0,
+					"status":   1,
+					"protocol": "dhcp",
+					"ipv4": map[string]any{
+						"ip":      "192.168.1.5",
+						"gateway": "192.168.1.1",
+						"dns":     []string{"1.1.1.1", "8.8.8.8"},
+					},
+				}
+			}
+			for _, m := range overrides.Fail {
+				handlers[m] = func(json.RawMessage) any {
+					return glinettest.RPCError{Code: -32603, Message: "Internal error"}
+				}
+			}
+			for _, m := range overrides.Block {
+				handlers[m] = func(json.RawMessage) any {
+					time.Sleep(4 * time.Second)
+					return glinettest.RPCError{Code: -32603, Message: "Internal error"}
+				}
 			}
 			// The router stops when the script ends.
 			router := glinettest.NewRouter(env.T().(testing.TB), handlers)

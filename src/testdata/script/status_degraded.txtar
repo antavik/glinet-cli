@@ -1,0 +1,20 @@
+# status: the three optional calls fail; each degrades its own line to
+# "unavailable" and the exit code stays 0.
+
+exec glinet-cli status
+cmp stdout want.txt
+! stderr .
+
+-- want.txt --
+Model: mt3000
+Hostname: GL-MT3000-49a
+MAC: 94:83:C4:0C:74:9A
+Firmware: 4.9.0
+Uptime: 1d 1h 1m
+Load: 0.12 0.34 0.56
+Memory: 45% (230 MiB / 512 MiB)
+Flash: 12% (15 MiB / 128 MiB)
+Ethernet: unavailable
+VPN: unavailable
+-- handlers.json --
+{"fail":["upgrade.check_firmware_online","cable.get_status","vpn-client.get_status"]}

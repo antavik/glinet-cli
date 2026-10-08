@@ -1,8 +1,8 @@
 # glinet-cli
 
 Small CLI for GL.iNet routers on firmware 4.8+ (tested against 4.9.0).
-It shows router uptime and lists, enables and disables VPN client tunnels
-from the VPN Dashboard (WireGuard and OpenVPN alike).
+It shows a router overview and lists, enables and disables VPN client
+tunnels from the VPN Dashboard (WireGuard and OpenVPN alike).
 
 ## Install
 
@@ -81,7 +81,16 @@ shell history.
 
 ```console
 $ glinet-cli status
-Uptime: 3d 4h 5m
+Model: mt3000
+Hostname: GL-MT3000-49a
+MAC: 94:83:C4:0C:74:9A
+Firmware: 4.9.0 (update available: 4.10.0)
+Uptime: 1d 1h 1m
+Load: 0.12 0.34 0.56
+Memory: 45% (230 MiB / 512 MiB)
+Flash: 12% (15 MiB / 128 MiB)
+Ethernet: dhcp 192.168.1.5 gw 192.168.1.1 dns 1.1.1.1,8.8.8.8 (connected)
+VPN: Home/WG connected, Travel/WG connecting
 
 $ glinet-cli vpn
 ID    NAME            ENABLED  STATUS
@@ -123,7 +132,9 @@ The router exposes JSON-RPC 2.0 at `POST /rpc`:
    (MD5 when absent).
 3. `login` with that hash returns a session ID.
 4. Everything else is `call` with `[sid, module, function, args]`:
-   `system.get_status`, `vpn-client.get_status`, `vpn-client.set_tunnel`.
+   `system.get_info`, `system.get_status`, `cable.get_status`,
+   `upgrade.check_firmware_online`, `vpn-client.get_status`,
+   `vpn-client.set_tunnel`.
 5. `logout` ends the session when the command is done.
 
 `set_tunnel` returns as soon as the router accepts the change; the tunnel
