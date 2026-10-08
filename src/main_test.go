@@ -194,6 +194,7 @@ func TestParseCommandLine(t *testing.T) {
 		{"-help"},
 		{"help"},
 		{"help", "help"},
+		{"help", "-h"},
 		{"help", "vpn"},
 		{"vpn", "-h"},
 		{"vpn", "on", "-help"},

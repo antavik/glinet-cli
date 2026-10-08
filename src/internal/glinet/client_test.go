@@ -212,13 +212,13 @@ func TestCheckFirmware(t *testing.T) {
 		{
 			name:    "update available",
 			result:  `{"current_version":"4.9.0","version_new":"4.10.0"}`,
-			want:    FirmwareUpdate{CurrentVersion: "4.9.0", NewVersion: "4.10.0"},
+			want:    FirmwareUpdate{NewVersion: "4.10.0"},
 			wantErr: false,
 		},
 		{
 			name:    "up to date",
 			result:  `{"current_version":"4.9.0"}`,
-			want:    FirmwareUpdate{CurrentVersion: "4.9.0"},
+			want:    FirmwareUpdate{},
 			wantErr: false,
 		},
 		{

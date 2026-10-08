@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"text/tabwriter"
 
@@ -134,7 +135,7 @@ func parseHelp(fs *flag.FlagSet, args []string) (cmd.Action, error) {
 	if len(args) > 1 {
 		return nil, errors.New("help takes at most one command")
 	}
-	if len(args) == 0 || args[0] == "help" {
+	if len(args) == 0 || slices.Contains([]string{"help", "-h", "-help", "--help"}, args[0]) {
 		return helpAction(func(w io.Writer) { printUsage(w, fs) }), nil
 	}
 	c, ok := cmd.Lookup(args[0])

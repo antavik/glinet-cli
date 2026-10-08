@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// DeviceInfo identifies the router.
 type DeviceInfo struct {
 	Model           string
 	MAC             string
@@ -12,6 +13,7 @@ type DeviceInfo struct {
 	Hostname        string
 }
 
+// Info returns the router's identity, with text made safe to print.
 func (c *Client) Info(ctx context.Context) (DeviceInfo, error) {
 	var res struct {
 		Model           string `json:"model"`
@@ -32,11 +34,13 @@ func (c *Client) Info(ctx context.Context) (DeviceInfo, error) {
 	}, nil
 }
 
+// Network is one uplink interface, such as "wan" or "wwan".
 type Network struct {
 	Interface string
 	Online    bool // internet is reachable through it
 }
 
+// SystemStatus is the router's uptime, load, memory, flash and uplinks.
 type SystemStatus struct {
 	Uptime          time.Duration
 	LoadAverage     [3]float64
@@ -48,6 +52,7 @@ type SystemStatus struct {
 	Networks        []Network // empty when the firmware omits it
 }
 
+// Status returns the router's current system status.
 func (c *Client) Status(ctx context.Context) (SystemStatus, error) {
 	var res struct {
 		Network []struct {

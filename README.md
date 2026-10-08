@@ -240,9 +240,9 @@ needs one test, at the cheapest level that can see it.
    (e.g. `wifi.go` for `wifi.*`), with a test against `glinettest.NewRouter`.
 2. Create `src/cmd/<name>/<name>.go` with an `init` that calls
    `cmd.Register(cmd.Command{...})`: its name, one usage line per form, and a
-   `Parse` that defines its flags, then only checks the arguments and returns an
-   action. Wrap router
-   work in `cmd.WithClient`, which logs in first and always logs out.
+   `Parse` that defines its flags, then only checks the arguments and returns
+   an action. Wrap router work in `cmd.WithClient`, which logs in first and
+   always logs out.
 3. Add a blank import of the package (`_ ".../src/cmd/<name>"`) in
    `src/main.go`. The help text lists commands sorted by name.
 

@@ -6,20 +6,25 @@ import (
 	"fmt"
 )
 
+// WanIPv4 is the IPv4 setup of the cable WAN.
 type WanIPv4 struct {
 	IP      string
 	Gateway string
 	DNS     []string
 }
 
+// WanStatus is the state of the cable WAN port.
 type WanStatus struct {
-	Protocol string
-	Status   int
+	Protocol string // e.g. "dhcp" or "static"
+	Status   int    // 0 disconnected, 1 connected, 2 connecting, 3 no cable
 	IPv4     WanIPv4
 }
 
+// ErrNoWAN means the router reports no cable WAN (a negative err_code).
 var ErrNoWAN = errors.New("no usable WAN")
 
+// WanStatus returns the cable WAN state, with text made safe to print. The
+// error wraps ErrNoWAN when the router has no cable WAN.
 func (c *Client) WanStatus(ctx context.Context) (WanStatus, error) {
 	var res struct {
 		Protocol string `json:"protocol"`

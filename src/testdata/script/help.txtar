@@ -18,6 +18,8 @@ exec glinet-cli -help
 cmp stdout usage.txt
 exec glinet-cli help
 cmp stdout usage.txt
+exec glinet-cli help -h
+cmp stdout usage.txt
 
 # Command help: its forms and only its own flags.
 exec glinet-cli vpn -h

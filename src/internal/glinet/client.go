@@ -28,7 +28,8 @@ import (
 )
 
 // Client talks to one router over the GL.iNet firmware 4.x JSON-RPC API.
-// Call Login before any other method.
+// Call Login before any other method. Between Login and Logout, methods are
+// safe to call from several goroutines at once.
 type Client struct {
 	url  string
 	http *http.Client
