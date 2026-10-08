@@ -85,14 +85,23 @@ func TestScript(t *testing.T) {
 				}
 			}
 			handlers["system.get_status"] = func(json.RawMessage) any {
-				return map[string]any{"system": map[string]any{
-					"uptime":       90061.5,
-					"load_average": []float64{0.12, 0.34, 0.56},
-					"memory_total": 536870912,
-					"memory_free":  295698432,
-					"flash_total":  134217728,
-					"flash_free":   118489088,
-				}}
+				return map[string]any{
+					"network": []map[string]any{
+						{"interface": "wan", "up": true, "online": true},
+						{"interface": "wwan", "up": false, "online": false},
+						{"interface": "tethering", "up": false, "online": false},
+						{"interface": "wan6", "up": false, "online": false},
+					},
+					"system": map[string]any{
+						"uptime":            90061.5,
+						"load_average":      []float64{0.12, 0.34, 0.56},
+						"memory_total":      536870912,
+						"memory_free":       295698432,
+						"memory_buff_cache": 33554432,
+						"flash_total":       134217728,
+						"flash_free":        118489088,
+					},
+				}
 			}
 			handlers["upgrade.check_firmware_online"] = func(json.RawMessage) any {
 				return map[string]any{"current_version": "4.9.0", "version_new": "4.10.0"}
@@ -162,6 +171,7 @@ func TestParseCommandLine(t *testing.T) {
 		{"auth", "login"},
 		{"auth", "logout"},
 		{"status"},
+		{"status", "-json"},
 		{"vpn"},
 		{"vpn", "status"},
 		{"vpn", "on", "-all"},

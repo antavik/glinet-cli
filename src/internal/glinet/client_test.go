@@ -2,6 +2,7 @@ package glinet
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -85,14 +86,21 @@ func TestLoginWrongPassword(t *testing.T) {
 func TestStatus(t *testing.T) {
 	c := loggedIn(t, map[string]glinettest.Handler{
 		"system.get_status": func(json.RawMessage) any {
-			return map[string]any{"system": map[string]any{
-				"uptime":       90061.5,
-				"load_average": [3]float64{2.01, 0.89, 0.33},
-				"memory_total": 126943232,
-				"memory_free":  78471168,
-				"flash_total":  106278912,
-				"flash_free":   105918464,
-			}}
+			return map[string]any{
+				"network": []map[string]any{
+					{"interface": "wan", "up": true, "online": true},
+					{"interface": "wwan\x1b", "up": false, "online": false},
+				},
+				"system": map[string]any{
+					"uptime":            90061.5,
+					"load_average":      [3]float64{2.01, 0.89, 0.33},
+					"memory_total":      126943232,
+					"memory_free":       78471168,
+					"memory_buff_cache": 16777216,
+					"flash_total":       106278912,
+					"flash_free":        105918464,
+				},
+			}
 		},
 	})
 	got, err := c.Status(t.Context())
@@ -100,14 +108,19 @@ func TestStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := SystemStatus{
-		Uptime:      25*time.Hour + time.Minute + 1500*time.Millisecond,
-		LoadAverage: [3]float64{2.01, 0.89, 0.33},
-		MemoryTotal: 126943232,
-		MemoryFree:  78471168,
-		FlashTotal:  106278912,
-		FlashFree:   105918464,
+		Uptime:          25*time.Hour + time.Minute + 1500*time.Millisecond,
+		LoadAverage:     [3]float64{2.01, 0.89, 0.33},
+		MemoryTotal:     126943232,
+		MemoryFree:      78471168,
+		MemoryBuffCache: 16777216,
+		FlashTotal:      106278912,
+		FlashFree:       105918464,
+		Networks: []Network{
+			{Interface: "wan", Online: true},
+			{Interface: "wwan?"},
+		},
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Status() = %+v, want %+v", got, want)
 	}
 }
@@ -144,6 +157,7 @@ func TestWanStatus(t *testing.T) {
 		result  string
 		want    WanStatus
 		wantErr bool
+		noWAN   bool // error must wrap ErrNoWAN
 	}{
 		{
 			name:    "static",
@@ -155,6 +169,7 @@ func TestWanStatus(t *testing.T) {
 			name:    "negative err_code",
 			result:  `{"mode":0,"status":1,"protocol":"static","ipv4":{"ip":"192.168.113.137/24","gateway":"192.168.113.1","dns":["8.8.8.8","8.8.4.4"]},"err_code":-4}`,
 			wantErr: true,
+			noWAN:   true,
 		},
 		{
 			name:    "empty protocol",
@@ -171,6 +186,9 @@ func TestWanStatus(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("WanStatus() = %+v, want error", got)
+				}
+				if errors.Is(err, ErrNoWAN) != tt.noWAN {
+					t.Errorf("errors.Is(%v, ErrNoWAN) = %v, want %v", err, !tt.noWAN, tt.noWAN)
 				}
 				return
 			}

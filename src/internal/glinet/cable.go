@@ -2,27 +2,24 @@ package glinet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
-// WanIPv4 is the WAN interface's IPv4 configuration.
 type WanIPv4 struct {
 	IP      string
 	Gateway string
 	DNS     []string
 }
 
-// WanStatus is the state of the WAN (cable) interface.
 type WanStatus struct {
 	Protocol string
 	Status   int
 	IPv4     WanIPv4
 }
 
-// WanStatus returns the WAN interface's protocol, up/down state and IPv4
-// settings, with strings made safe to print. The router reports a negative
-// err_code as a field of the result payload when it has no usable WAN: -4
-// means no physical WAN port and -5 means no virtual WAN is configured.
+var ErrNoWAN = errors.New("no usable WAN")
+
 func (c *Client) WanStatus(ctx context.Context) (WanStatus, error) {
 	var res struct {
 		Protocol string `json:"protocol"`
@@ -38,10 +35,10 @@ func (c *Client) WanStatus(ctx context.Context) (WanStatus, error) {
 		return WanStatus{}, err
 	}
 	if res.ErrCode < 0 {
-		return WanStatus{}, fmt.Errorf("no usable WAN (err_code %d)", res.ErrCode)
+		return WanStatus{}, fmt.Errorf("%w (err_code %d)", ErrNoWAN, res.ErrCode)
 	}
 	if res.Protocol == "" {
-		return WanStatus{}, fmt.Errorf("WAN status has no protocol")
+		return WanStatus{}, errors.New("WAN status has no protocol")
 	}
 	for i := range res.IPv4.DNS {
 		res.IPv4.DNS[i] = printable(res.IPv4.DNS[i])

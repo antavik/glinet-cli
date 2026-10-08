@@ -81,16 +81,17 @@ shell history.
 
 ```console
 $ glinet-cli status
-Model: mt3000
-Hostname: GL-MT3000-49a
-MAC: 94:83:C4:0C:74:9A
-Firmware: 4.9.0 (update available: 4.10.0)
-Uptime: 1d 1h 1m
-Load: 0.12 0.34 0.56
-Memory: 45% (230 MiB / 512 MiB)
-Flash: 12% (15 MiB / 128 MiB)
-Ethernet: dhcp 192.168.1.5 gw 192.168.1.1 dns 1.1.1.1,8.8.8.8 (connected)
-VPN: Home/WG connected, Travel/WG connecting
+Router    GL-MT3000-49a  mt3000  94:83:C4:0C:74:9A
+Firmware  4.9.0 (update 4.10.0 available)
+Uptime    1d 1h 1m
+Load      0.12 0.34 0.56
+Memory    39%  198 MiB / 512 MiB
+Flash     12%  15 MiB / 128 MiB
+WAN       online via cable  dhcp 192.168.1.5  gw 192.168.1.1  dns 1.1.1.1, 8.8.8.8
+VPN       Home/WG #2001 connected, Travel/WG #2003 connecting
+
+$ glinet-cli status -json | jq -r .wan.online[]
+cable
 
 $ glinet-cli vpn
 ID    NAME            ENABLED  STATUS
@@ -120,6 +121,16 @@ until each tunnel reports connected (status `1`), one tunnel at a time,
 including tunnels that were already on. `-timeout` bounds the whole command,
 so raise it for slow tunnels; a tunnel still connecting when it expires fails
 the command.
+
+`status` fails only when the router's identity or system status can't be
+read. The firmware check, cable WAN details and VPN tunnels are best-effort:
+each runs in parallel with a 5-second cap, so a firmware check that hangs
+while the router is offline costs only its own line. A part that fails shows
+as `update check failed` or `unknown`, with the reason on stderr, and the exit
+code stays 0. `WAN` reports which uplink (cable, repeater or tethering) is
+online. Memory counts buffers and cache as available, as `free` does.
+`-json` prints the same data as one object; a failed part is `null` with an
+`error` string next to it.
 
 ## How it works
 
@@ -163,8 +174,9 @@ checked against a router on firmware 4.9.0:
   [archived copy](https://web.archive.org/web/20240121142533/https://dev.gl-inet.com/router-4.x-api/)
   remains. It predates the 4.8 `vpn-client` module.
 - [gli4py](https://github.com/HarvsG/gli4py): Python client whose code and
-  mock fixtures show the `vpn-client` module (`get_status`, `set_tunnel`) and
-  the tunnel status codes.
+  mock fixtures show the `vpn-client` module (`get_status`, `set_tunnel`), the
+  tunnel status codes, and the `network` uplink list and `memory_buff_cache`
+  field of `system.get_status`.
 - [python-glinet](https://pypi.org/project/python-glinet/)
   ([docs](https://python-glinet.readthedocs.io/)): Python client whose code
   shows `logout` taking `{"sid": ...}` and errors arriving in the JSON-RPC

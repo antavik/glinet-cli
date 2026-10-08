@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// DeviceInfo identifies the router.
 type DeviceInfo struct {
 	Model           string
 	MAC             string
@@ -13,8 +12,6 @@ type DeviceInfo struct {
 	Hostname        string
 }
 
-// Info returns the router's model, MAC, firmware version and hostname, with
-// strings made safe to print.
 func (c *Client) Info(ctx context.Context) (DeviceInfo, error) {
 	var res struct {
 		Model           string `json:"model"`
@@ -35,38 +32,53 @@ func (c *Client) Info(ctx context.Context) (DeviceInfo, error) {
 	}, nil
 }
 
-// SystemStatus is the router's uptime, load and storage usage.
-type SystemStatus struct {
-	Uptime      time.Duration
-	LoadAverage [3]float64
-	MemoryTotal uint64
-	MemoryFree  uint64
-	FlashTotal  uint64
-	FlashFree   uint64
+type Network struct {
+	Interface string
+	Online    bool // internet is reachable through it
 }
 
-// Status returns how long the router has been running, its load averages and
-// its memory and flash usage.
+type SystemStatus struct {
+	Uptime          time.Duration
+	LoadAverage     [3]float64
+	MemoryTotal     uint64
+	MemoryFree      uint64
+	MemoryBuffCache uint64 // reclaimable; zero when the firmware omits it
+	FlashTotal      uint64
+	FlashFree       uint64
+	Networks        []Network // empty when the firmware omits it
+}
+
 func (c *Client) Status(ctx context.Context) (SystemStatus, error) {
 	var res struct {
+		Network []struct {
+			Interface string `json:"interface"`
+			Online    bool   `json:"online"`
+		} `json:"network"`
 		System struct {
-			Uptime      float64    `json:"uptime"` // seconds
-			LoadAverage [3]float64 `json:"load_average"`
-			MemoryTotal uint64     `json:"memory_total"`
-			MemoryFree  uint64     `json:"memory_free"`
-			FlashTotal  uint64     `json:"flash_total"`
-			FlashFree   uint64     `json:"flash_free"`
+			Uptime          float64    `json:"uptime"` // seconds
+			LoadAverage     [3]float64 `json:"load_average"`
+			MemoryTotal     uint64     `json:"memory_total"`
+			MemoryFree      uint64     `json:"memory_free"`
+			MemoryBuffCache uint64     `json:"memory_buff_cache"`
+			FlashTotal      uint64     `json:"flash_total"`
+			FlashFree       uint64     `json:"flash_free"`
 		} `json:"system"`
 	}
 	if err := c.call(ctx, "system", "get_status", nil, &res); err != nil {
 		return SystemStatus{}, err
 	}
+	var nets []Network
+	for _, n := range res.Network {
+		nets = append(nets, Network{Interface: printable(n.Interface), Online: n.Online})
+	}
 	return SystemStatus{
-		Uptime:      time.Duration(res.System.Uptime * float64(time.Second)),
-		LoadAverage: res.System.LoadAverage,
-		MemoryTotal: res.System.MemoryTotal,
-		MemoryFree:  res.System.MemoryFree,
-		FlashTotal:  res.System.FlashTotal,
-		FlashFree:   res.System.FlashFree,
+		Uptime:          time.Duration(res.System.Uptime * float64(time.Second)),
+		LoadAverage:     res.System.LoadAverage,
+		MemoryTotal:     res.System.MemoryTotal,
+		MemoryFree:      res.System.MemoryFree,
+		MemoryBuffCache: res.System.MemoryBuffCache,
+		FlashTotal:      res.System.FlashTotal,
+		FlashFree:       res.System.FlashFree,
+		Networks:        nets,
 	}, nil
 }

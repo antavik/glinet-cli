@@ -47,7 +47,7 @@ Usage: glinet-cli [flags] <command>
 Commands:
   auth [login]                          check password and save it in the OS keychain
   auth logout                           remove the saved password
-  status                                show router overview
+  status [-json]                        show router overview
   vpn [status]                          list VPN tunnels
   vpn on <id|name> | -all [-wait]       turn VPN tunnel(s) on (-wait: until connected)
   vpn off <id|name> | -all              turn VPN tunnel(s) off

@@ -2,20 +2,15 @@ package glinet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
-// FirmwareUpdate holds the router's current firmware version and, when an
-// update is available, the new version.
 type FirmwareUpdate struct {
 	CurrentVersion string
 	NewVersion     string
 }
 
-// CheckFirmware reports the router's firmware version and any available
-// update, with strings made safe to print. NewVersion is empty when the router
-// is already current. The router reports a negative err_code as a field of the
-// result payload when the check cannot run.
 func (c *Client) CheckFirmware(ctx context.Context) (FirmwareUpdate, error) {
 	var res struct {
 		CurrentVersion string `json:"current_version"`
@@ -29,7 +24,7 @@ func (c *Client) CheckFirmware(ctx context.Context) (FirmwareUpdate, error) {
 		return FirmwareUpdate{}, fmt.Errorf("firmware check failed (err_code %d)", res.ErrCode)
 	}
 	if res.CurrentVersion == "" {
-		return FirmwareUpdate{}, fmt.Errorf("firmware check returned no current version")
+		return FirmwareUpdate{}, errors.New("firmware check returned no current version")
 	}
 	return FirmwareUpdate{
 		CurrentVersion: printable(res.CurrentVersion),
