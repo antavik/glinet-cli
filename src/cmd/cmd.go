@@ -22,8 +22,10 @@ type Command struct {
 	// Usage has one help line per form of the command: the synopsis, a tab,
 	// then a summary, e.g. "vpn [status]\tlist VPN tunnels".
 	Usage []string
-	// Parse returns the action for args after Name. It adds its own flags to
-	// fs, which holds the global ones. Any error means bad usage.
+	// Parse returns the action for args after Name. It defines its own flags
+	// on fs, which holds the global ones, before parsing args: help lists
+	// them by calling Parse with "-h" on an empty set. Any error means bad
+	// usage.
 	Parse func(fs *flag.FlagSet, args []string) (Action, error)
 }
 

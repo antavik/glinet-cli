@@ -31,9 +31,6 @@ func main() {
 	fs := newFlagSet(&cfg)
 	action, err := parseCommandLine(fs, &cfg, os.Args[1:])
 	switch {
-	case errors.Is(err, flag.ErrHelp):
-		printUsage(os.Stderr, fs)
-		return
 	case errors.Is(err, errNoCommand):
 		printUsage(os.Stderr, fs)
 		os.Exit(2)
@@ -62,10 +59,14 @@ func newFlagSet(cfg *config.Config) *flag.FlagSet {
 var errNoCommand = errors.New("no command")
 
 // parseCommandLine parses global flags, the command and its arguments.
-// It returns flag.ErrHelp for -h; any other error means bad usage.
+// -h, -help and "help" give an action that prints help. Any error means bad
+// usage.
 func parseCommandLine(fs *flag.FlagSet, cfg *config.Config, argv []string) (cmd.Action, error) {
 	showVersion := fs.Bool("version", false, "print version and exit")
 	if err := fs.Parse(argv); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return helpAction(func(w io.Writer) { printUsage(w, fs) }), nil
+		}
 		return nil, err
 	}
 	if *showVersion {
@@ -74,11 +75,22 @@ func parseCommandLine(fs *flag.FlagSet, cfg *config.Config, argv []string) (cmd.
 	if fs.NArg() == 0 {
 		return nil, errNoCommand
 	}
+	if fs.Arg(0) == "help" {
+		return parseHelp(fs, fs.Args()[1:])
+	}
 	c, ok := cmd.Lookup(fs.Arg(0))
 	if !ok {
 		return nil, fmt.Errorf("unknown command %q", fs.Arg(0))
 	}
-	action, err := c.Parse(fs, fs.Args()[1:])
+	// c parses into a copy of the global flags, so its own flags stay out
+	// of fs and the top-level help.
+	cfs := flag.NewFlagSet(c.Name, flag.ContinueOnError)
+	cfs.SetOutput(io.Discard)
+	fs.VisitAll(func(f *flag.Flag) { cfs.Var(f.Value, f.Name, f.Usage) })
+	action, err := c.Parse(cfs, fs.Args()[1:])
+	if errors.Is(err, flag.ErrHelp) {
+		return helpAction(func(w io.Writer) { printCommandUsage(w, c) }), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -114,4 +126,51 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	_ = tw.Flush() // Nowhere to report a failed write of the help text.
 	fs.SetOutput(w)
 	fs.PrintDefaults()
+	fmt.Fprint(w, "\nRun \"glinet-cli help <command>\" for command details.\n")
+}
+
+// parseHelp handles "help [command]".
+func parseHelp(fs *flag.FlagSet, args []string) (cmd.Action, error) {
+	if len(args) > 1 {
+		return nil, errors.New("help takes at most one command")
+	}
+	if len(args) == 0 || args[0] == "help" {
+		return helpAction(func(w io.Writer) { printUsage(w, fs) }), nil
+	}
+	c, ok := cmd.Lookup(args[0])
+	if !ok {
+		return nil, fmt.Errorf("unknown command %q", args[0])
+	}
+	return helpAction(func(w io.Writer) { printCommandUsage(w, c) }), nil
+}
+
+// helpAction prints requested help to stdout.
+func helpAction(printHelp func(io.Writer)) cmd.Action {
+	return func(_ context.Context, _ config.Config, stdio cmd.IO) error {
+		printHelp(stdio.Out)
+		return nil
+	}
+}
+
+// printCommandUsage prints c's forms and its own flags. c.Parse defines its
+// flags on a fresh set, without the global ones; "-h" stops it right after.
+func printCommandUsage(w io.Writer, c cmd.Command) {
+	fs := flag.NewFlagSet(c.Name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	_, _ = c.Parse(fs, []string{"-h"})
+
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprint(tw, "Usage:\n")
+	for _, u := range c.Usage {
+		fmt.Fprintf(tw, "  glinet-cli %s\n", u)
+	}
+	_ = tw.Flush()
+
+	hasFlags := false
+	fs.VisitAll(func(*flag.Flag) { hasFlags = true })
+	if hasFlags {
+		fmt.Fprint(w, "\nFlags:\n")
+		fs.SetOutput(w)
+		fs.PrintDefaults()
+	}
 }

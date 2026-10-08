@@ -31,6 +31,8 @@ go run ./src <command>
 
 All Go code lives in `src/`. Go names a binary after its folder, so
 `go install .../src` would install it as `src`; use `go build -o` instead.
+`glinet-cli help` lists the commands and global flags; `glinet-cli <command> -h`
+or `glinet-cli help <command>` shows one command's forms and flags.
 `glinet-cli -version` prints `dev` unless the build sets
 `-ldflags "-X main.version=1.2.3"`; `make build` sets it from `git describe`.
 
@@ -238,7 +240,8 @@ needs one test, at the cheapest level that can see it.
    (e.g. `wifi.go` for `wifi.*`), with a test against `glinettest.NewRouter`.
 2. Create `src/cmd/<name>/<name>.go` with an `init` that calls
    `cmd.Register(cmd.Command{...})`: its name, one usage line per form, and a
-   `Parse` that only checks the arguments and returns an action. Wrap router
+   `Parse` that defines its flags, then only checks the arguments and returns an
+   action. Wrap router
    work in `cmd.WithClient`, which logs in first and always logs out.
 3. Add a blank import of the package (`_ ".../src/cmd/<name>"`) in
    `src/main.go`. The help text lists commands sorted by name.

@@ -3,12 +3,12 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"flag"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -189,6 +189,15 @@ func TestParseCommandLine(t *testing.T) {
 		{"vpn", "-wait", "restart", "-all"},
 		{"vpn", "restart", "-all", "-wait"},
 		{"vpn", "on", "2001", "--wait"},
+		// Help.
+		{"-h"},
+		{"-help"},
+		{"help"},
+		{"help", "help"},
+		{"help", "vpn"},
+		{"vpn", "-h"},
+		{"vpn", "on", "-help"},
+		{"-timeout", "0", "vpn", "-h"},
 	}
 	for _, args := range valid {
 		var cfg config.Config
@@ -217,6 +226,8 @@ func TestParseCommandLine(t *testing.T) {
 		{"status", "-wait"},
 		{"vpn", "-wait"},
 		{"vpn", "off", "-all", "-wait"},
+		{"help", "reboot"},
+		{"help", "vpn", "on"},
 	}
 	for _, args := range invalid {
 		var cfg config.Config
@@ -229,9 +240,6 @@ func TestParseCommandLine(t *testing.T) {
 	if _, err := parseCommandLine(newFlagSet(&cfg), &cfg, nil); !errors.Is(err, errNoCommand) {
 		t.Errorf("parseCommandLine(nil) error = %v, want errNoCommand", err)
 	}
-	if _, err := parseCommandLine(newFlagSet(&cfg), &cfg, []string{"vpn", "-h"}); !errors.Is(err, flag.ErrHelp) {
-		t.Errorf("parseCommandLine(vpn -h) error = %v, want flag.ErrHelp", err)
-	}
 }
 
 // TestCommandFlags catches command flags that clash with global ones.
@@ -239,5 +247,23 @@ func TestCommandFlags(t *testing.T) {
 	for _, c := range cmd.All() {
 		var cfg config.Config
 		_, _ = parseCommandLine(newFlagSet(&cfg), &cfg, []string{c.Name})
+	}
+}
+
+// TestCommandUsage checks each command's help shows its forms and none of
+// the global flags; printCommandUsage relies on Parse defining flags first.
+func TestCommandUsage(t *testing.T) {
+	for _, c := range cmd.All() {
+		var b strings.Builder
+		printCommandUsage(&b, c)
+		for _, u := range c.Usage {
+			synopsis, _, _ := strings.Cut(u, "\t")
+			if !strings.Contains(b.String(), "glinet-cli "+synopsis) {
+				t.Errorf("%s help lacks %q:\n%s", c.Name, synopsis, b.String())
+			}
+		}
+		if strings.Contains(b.String(), "-url") {
+			t.Errorf("%s help shows global flags:\n%s", c.Name, b.String())
+		}
 	}
 }
