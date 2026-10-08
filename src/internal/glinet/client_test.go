@@ -208,6 +208,11 @@ func TestCheckFirmware(t *testing.T) {
 			result:  `{"current_version":""}`,
 			wantErr: true,
 		},
+		{
+			name:    "negative err_code",
+			result:  `{"current_version":"4.9.0","err_code":-2}`,
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
