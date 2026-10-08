@@ -1,4 +1,3 @@
-// Package status implements "glinet-cli status": router overview.
 package status
 
 import (
@@ -86,8 +85,6 @@ func fetch(ctx context.Context, c *glinet.Client) (overview, error) {
 	return o, nil
 }
 
-// warn reports why each optional part is missing. A router without a cable
-// WAN is a state, not a failure, so it gets no warning.
 func (o overview) warn(w io.Writer) {
 	for _, err := range []error{o.updErr, o.wanErr, o.tunErr} {
 		if err != nil && !errors.Is(err, glinet.ErrNoWAN) {
