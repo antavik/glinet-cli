@@ -138,6 +138,99 @@ func TestInfo(t *testing.T) {
 	}
 }
 
+func TestWanStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		result  string
+		want    WanStatus
+		wantErr bool
+	}{
+		{
+			name:    "static",
+			result:  `{"mode":0,"status":1,"protocol":"static","ipv4":{"ip":"192.168.113.137/24","gateway":"192.168.113.1","dns":["8.8.8.8","8.8.4.4"]}}`,
+			want:    WanStatus{Protocol: "static", Status: 1, IPv4: WanIPv4{IP: "192.168.113.137/24", Gateway: "192.168.113.1", DNS: []string{"8.8.8.8", "8.8.4.4"}}},
+			wantErr: false,
+		},
+		{
+			name:    "negative err_code",
+			result:  `{"mode":0,"status":1,"protocol":"static","ipv4":{"ip":"192.168.113.137/24","gateway":"192.168.113.1","dns":["8.8.8.8","8.8.4.4"]},"err_code":-4}`,
+			wantErr: true,
+		},
+		{
+			name:    "empty protocol",
+			result:  `{"mode":0,"status":1,"ipv4":{"ip":"192.168.113.137/24","gateway":"192.168.113.1","dns":["8.8.8.8"]}}`,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := loggedIn(t, map[string]glinettest.Handler{
+				"cable.get_status": func(json.RawMessage) any { return json.RawMessage(tt.result) },
+			})
+			got, err := c.WanStatus(t.Context())
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("WanStatus() = %+v, want error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("WanStatus() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckFirmware(t *testing.T) {
+	tests := []struct {
+		name    string
+		result  string
+		want    FirmwareUpdate
+		wantErr bool
+	}{
+		{
+			name:    "update available",
+			result:  `{"current_version":"4.9.0","version_new":"4.10.0"}`,
+			want:    FirmwareUpdate{CurrentVersion: "4.9.0", NewVersion: "4.10.0"},
+			wantErr: false,
+		},
+		{
+			name:    "up to date",
+			result:  `{"current_version":"4.9.0"}`,
+			want:    FirmwareUpdate{CurrentVersion: "4.9.0"},
+			wantErr: false,
+		},
+		{
+			name:    "empty current version",
+			result:  `{"current_version":""}`,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := loggedIn(t, map[string]glinettest.Handler{
+				"upgrade.check_firmware_online": func(json.RawMessage) any { return json.RawMessage(tt.result) },
+			})
+			got, err := c.CheckFirmware(t.Context())
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("CheckFirmware() = %+v, want error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("CheckFirmware() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTunnels(t *testing.T) {
 	c := loggedIn(t, map[string]glinettest.Handler{
 		"vpn-client.get_status": func(json.RawMessage) any {
