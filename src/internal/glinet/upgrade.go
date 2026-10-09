@@ -6,13 +6,10 @@ import (
 	"fmt"
 )
 
-// FirmwareUpdate is the result of an online firmware check.
 type FirmwareUpdate struct {
 	NewVersion string // "" when up to date
 }
 
-// CheckFirmware asks the router to look online for a newer firmware. The
-// router needs internet access for it.
 func (c *Client) CheckFirmware(ctx context.Context) (FirmwareUpdate, error) {
 	var res struct {
 		CurrentVersion string `json:"current_version"`
