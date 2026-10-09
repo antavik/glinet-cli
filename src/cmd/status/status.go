@@ -47,8 +47,6 @@ func parse(fs *flag.FlagSet, args []string) (cmd.Action, error) {
 	}), nil
 }
 
-var optionalTimeout = 5 * time.Second
-
 type overview struct {
 	info    glinet.DeviceInfo
 	st      glinet.SystemStatus
@@ -70,17 +68,12 @@ func fetch(ctx context.Context, c *glinet.Client) (overview, error) {
 		return overview{}, err
 	}
 
+	// Optional calls run in parallel under the command's -timeout deadline.
+	// One that fails drops its row instead of failing the command.
 	var wg sync.WaitGroup
-	optional := func(call func(context.Context)) {
-		wg.Go(func() {
-			ctx, cancel := context.WithTimeout(ctx, optionalTimeout)
-			defer cancel()
-			call(ctx)
-		})
-	}
-	optional(func(ctx context.Context) { o.upd, o.updErr = c.CheckFirmware(ctx) })
-	optional(func(ctx context.Context) { o.wan, o.wanErr = c.WanStatus(ctx) })
-	optional(func(ctx context.Context) { o.tunnels, o.tunErr = c.Tunnels(ctx) })
+	wg.Go(func() { o.upd, o.updErr = c.CheckFirmware(ctx) })
+	wg.Go(func() { o.wan, o.wanErr = c.WanStatus(ctx) })
+	wg.Go(func() { o.tunnels, o.tunErr = c.Tunnels(ctx) })
 	wg.Wait()
 	return o, nil
 }
