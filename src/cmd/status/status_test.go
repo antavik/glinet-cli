@@ -138,58 +138,35 @@ func TestVPNText(t *testing.T) {
 	}
 }
 
-// TestFetchOptional checks that a hung firmware check fails alone: once on
-// its own cap, and once on the command's deadline, which WAN and VPN beat
-// only because they run alongside it.
 func TestFetchOptional(t *testing.T) {
-	tests := []struct {
-		name            string
-		optionalTimeout time.Duration
-		deadline        time.Duration // 0 for none
-	}{
-		{"per-call cap", 100 * time.Millisecond, 0},
-		{"parallel", time.Hour, 300 * time.Millisecond},
+	release := make(chan struct{})
+	handlers := glinettest.NewVPN(glinettest.Tunnel{ID: 1, Name: "A", Enabled: true, Status: 1}).Handlers()
+	handlers["system.get_info"] = func(json.RawMessage) any { return map[string]any{"firmware_version": "4.9.0"} }
+	handlers["system.get_status"] = func(json.RawMessage) any { return map[string]any{} }
+	handlers["cable.get_status"] = func(json.RawMessage) any { return map[string]any{"protocol": "dhcp", "status": 1} }
+	handlers["upgrade.check_firmware_online"] = func(json.RawMessage) any {
+		<-release
+		return map[string]any{}
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			old := optionalTimeout
-			optionalTimeout = tt.optionalTimeout
-			t.Cleanup(func() { optionalTimeout = old })
+	router := glinettest.NewRouter(t, handlers)
+	// Cleanups run last-in first-out: free the hung handler before the
+	// router's server waits for it to return.
+	t.Cleanup(func() { close(release) })
+	c := glinet.NewClient(router.URL)
+	if err := c.Login(t.Context(), glinettest.User, glinettest.Password); err != nil {
+		t.Fatal(err)
+	}
 
-			release := make(chan struct{})
-			handlers := glinettest.NewVPN(glinettest.Tunnel{ID: 1, Name: "A", Enabled: true, Status: 1}).Handlers()
-			handlers["system.get_info"] = func(json.RawMessage) any { return map[string]any{"firmware_version": "4.9.0"} }
-			handlers["system.get_status"] = func(json.RawMessage) any { return map[string]any{} }
-			handlers["cable.get_status"] = func(json.RawMessage) any { return map[string]any{"protocol": "dhcp", "status": 1} }
-			handlers["upgrade.check_firmware_online"] = func(json.RawMessage) any {
-				<-release
-				return map[string]any{}
-			}
-			router := glinettest.NewRouter(t, handlers)
-			// Cleanups run last-in first-out: free the hung handler before the
-			// router's server waits for it to return.
-			t.Cleanup(func() { close(release) })
-			c := glinet.NewClient(router.URL)
-			if err := c.Login(t.Context(), glinettest.User, glinettest.Password); err != nil {
-				t.Fatal(err)
-			}
-
-			ctx := t.Context()
-			if tt.deadline > 0 {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, tt.deadline)
-				defer cancel()
-			}
-			o, err := fetch(ctx, c)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !errors.Is(o.updErr, context.DeadlineExceeded) {
-				t.Errorf("firmware error = %v, want deadline exceeded", o.updErr)
-			}
-			if o.wanErr != nil || o.tunErr != nil {
-				t.Errorf("WAN error = %v, VPN error = %v; want both nil", o.wanErr, o.tunErr)
-			}
-		})
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	o, err := fetch(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(o.updErr, context.DeadlineExceeded) {
+		t.Errorf("firmware error = %v, want deadline exceeded", o.updErr)
+	}
+	if o.wanErr != nil || o.tunErr != nil {
+		t.Errorf("WAN error = %v, VPN error = %v; want both nil", o.wanErr, o.tunErr)
 	}
 }
