@@ -1,0 +1,12 @@
+# status: a failing core call (system.get_status) exits 1 with its own RPC
+# error before the optional calls run. The blocking upgrade handler proves
+# the order: it must never be reached, or the 1s timeout would turn the
+# error into a context deadline. No timing is asserted; the error kind is
+# exact, which only a core-first implementation produces.
+
+exits 1 glinet-cli -timeout 1s status
+! stdout .
+stderr '^glinet-cli: system\.get_status: Internal error \(code -32603\)$'
+
+-- handlers.json --
+{"fail":["system.get_status"],"block":["upgrade.check_firmware_online"]}

@@ -1,5 +1,84 @@
-# status: router uptime.
+# status: happy path, exact output as text and as JSON.
 
 exec glinet-cli status
-stdout '^Uptime: 1d 1h 1m$'
+cmp stdout want.txt
 ! stderr .
+
+exec glinet-cli status -json
+cmp stdout want.json
+! stderr .
+
+-- want.txt --
+Router    GL-MT3000-49a  mt3000  94:83:C4:0C:74:9A
+Firmware  4.9.0 (update 4.10.0 available)
+Uptime    1d 1h 1m
+Load      0.12 0.34 0.56
+Memory    39%  198 MiB / 512 MiB
+Flash     12%  15 MiB / 128 MiB
+WAN       online via cable  dhcp 192.168.1.5  gw 192.168.1.1  dns 1.1.1.1, 8.8.8.8
+VPN       Home/WG #2001 connected, Travel/WG #2003 connecting
+-- want.json --
+{
+  "router": {
+    "model": "mt3000",
+    "hostname": "GL-MT3000-49a",
+    "mac": "94:83:C4:0C:74:9A"
+  },
+  "firmware": {
+    "version": "4.9.0",
+    "update": "4.10.0"
+  },
+  "uptime_seconds": 90061,
+  "load_average": [
+    0.12,
+    0.34,
+    0.56
+  ],
+  "memory": {
+    "total_bytes": 536870912,
+    "used_bytes": 207618048,
+    "used_percent": 39
+  },
+  "flash": {
+    "total_bytes": 134217728,
+    "used_bytes": 15728640,
+    "used_percent": 12
+  },
+  "wan": {
+    "online": [
+      "cable"
+    ],
+    "cable": {
+      "protocol": "dhcp",
+      "status": "connected",
+      "ip": "192.168.1.5",
+      "gateway": "192.168.1.1",
+      "dns": [
+        "1.1.1.1",
+        "8.8.8.8"
+      ]
+    }
+  },
+  "vpn": {
+    "tunnels": [
+      {
+        "id": 2001,
+        "name": "Home/WG",
+        "enabled": true,
+        "status": "connected"
+      },
+      {
+        "id": 2002,
+        "name": "Work/OVPN",
+        "enabled": false,
+        "status": "off"
+      },
+      {
+        "id": 2003,
+        "name": "Travel/WG",
+        "enabled": true,
+        "status": "connecting"
+      }
+    ]
+  }
+}

@@ -3,13 +3,14 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"flag"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/rogpeppe/go-internal/testscript"
 	"github.com/zalando/go-keyring"
@@ -37,6 +38,15 @@ var defaultTunnels = []glinettest.Tunnel{
 	{ID: 2003, Name: "Travel/WG", Enabled: true, Status: 2},
 }
 
+// handlerOverrides comes from an optional handlers.json in a script's work
+// dir, alongside tunnels.json. fail makes the named methods return an error
+// at once; block makes them sleep first, so a call made against a short
+// -timeout dies on the deadline instead of on the router's error.
+type handlerOverrides struct {
+	Fail  []string `json:"fail"`
+	Block []string `json:"block"`
+}
+
 // TestScript runs testdata/script, each script against its own fake router.
 // "exits <code> <cmd> [args...]" checks an exact exit code.
 func TestScript(t *testing.T) {
@@ -55,9 +65,69 @@ func TestScript(t *testing.T) {
 			case !errors.Is(err, fs.ErrNotExist):
 				return err
 			}
+			var overrides handlerOverrides
+			data, err = os.ReadFile(filepath.Join(env.WorkDir, "handlers.json"))
+			switch {
+			case err == nil:
+				if err := json.Unmarshal(data, &overrides); err != nil {
+					return err
+				}
+			case !errors.Is(err, fs.ErrNotExist):
+				return err
+			}
 			handlers := glinettest.NewVPN(tunnels...).Handlers()
+			handlers["system.get_info"] = func(json.RawMessage) any {
+				return map[string]any{
+					"model":            "mt3000",
+					"mac":              "94:83:C4:0C:74:9A",
+					"firmware_version": "4.9.0",
+					"board_info":       map[string]any{"hostname": "GL-MT3000-49a"},
+				}
+			}
 			handlers["system.get_status"] = func(json.RawMessage) any {
-				return map[string]any{"system": map[string]any{"uptime": 90061.5}}
+				return map[string]any{
+					"network": []map[string]any{
+						{"interface": "wan", "up": true, "online": true},
+						{"interface": "wwan", "up": false, "online": false},
+						{"interface": "tethering", "up": false, "online": false},
+						{"interface": "wan6", "up": false, "online": false},
+					},
+					"system": map[string]any{
+						"uptime":            90061.5,
+						"load_average":      []float64{0.12, 0.34, 0.56},
+						"memory_total":      536870912,
+						"memory_free":       295698432,
+						"memory_buff_cache": 33554432,
+						"flash_total":       134217728,
+						"flash_free":        118489088,
+					},
+				}
+			}
+			handlers["upgrade.check_firmware_online"] = func(json.RawMessage) any {
+				return map[string]any{"current_version": "4.9.0", "version_new": "4.10.0"}
+			}
+			handlers["cable.get_status"] = func(json.RawMessage) any {
+				return map[string]any{
+					"mode":     0,
+					"status":   1,
+					"protocol": "dhcp",
+					"ipv4": map[string]any{
+						"ip":      "192.168.1.5",
+						"gateway": "192.168.1.1",
+						"dns":     []string{"1.1.1.1", "8.8.8.8"},
+					},
+				}
+			}
+			for _, m := range overrides.Fail {
+				handlers[m] = func(json.RawMessage) any {
+					return glinettest.RPCError{Code: -32603, Message: "Internal error"}
+				}
+			}
+			for _, m := range overrides.Block {
+				handlers[m] = func(json.RawMessage) any {
+					time.Sleep(4 * time.Second)
+					return glinettest.RPCError{Code: -32603, Message: "Internal error"}
+				}
 			}
 			// The router stops when the script ends.
 			router := glinettest.NewRouter(env.T().(testing.TB), handlers)
@@ -101,6 +171,7 @@ func TestParseCommandLine(t *testing.T) {
 		{"auth", "login"},
 		{"auth", "logout"},
 		{"status"},
+		{"status", "-json"},
 		{"vpn"},
 		{"vpn", "status"},
 		{"vpn", "on", "-all"},
@@ -118,6 +189,16 @@ func TestParseCommandLine(t *testing.T) {
 		{"vpn", "-wait", "restart", "-all"},
 		{"vpn", "restart", "-all", "-wait"},
 		{"vpn", "on", "2001", "--wait"},
+		// Help.
+		{"-h"},
+		{"-help"},
+		{"help"},
+		{"help", "help"},
+		{"help", "-h"},
+		{"help", "vpn"},
+		{"vpn", "-h"},
+		{"vpn", "on", "-help"},
+		{"-timeout", "0", "vpn", "-h"},
 	}
 	for _, args := range valid {
 		var cfg config.Config
@@ -146,6 +227,8 @@ func TestParseCommandLine(t *testing.T) {
 		{"status", "-wait"},
 		{"vpn", "-wait"},
 		{"vpn", "off", "-all", "-wait"},
+		{"help", "reboot"},
+		{"help", "vpn", "on"},
 	}
 	for _, args := range invalid {
 		var cfg config.Config
@@ -158,9 +241,6 @@ func TestParseCommandLine(t *testing.T) {
 	if _, err := parseCommandLine(newFlagSet(&cfg), &cfg, nil); !errors.Is(err, errNoCommand) {
 		t.Errorf("parseCommandLine(nil) error = %v, want errNoCommand", err)
 	}
-	if _, err := parseCommandLine(newFlagSet(&cfg), &cfg, []string{"vpn", "-h"}); !errors.Is(err, flag.ErrHelp) {
-		t.Errorf("parseCommandLine(vpn -h) error = %v, want flag.ErrHelp", err)
-	}
 }
 
 // TestCommandFlags catches command flags that clash with global ones.
@@ -168,5 +248,23 @@ func TestCommandFlags(t *testing.T) {
 	for _, c := range cmd.All() {
 		var cfg config.Config
 		_, _ = parseCommandLine(newFlagSet(&cfg), &cfg, []string{c.Name})
+	}
+}
+
+// TestCommandUsage checks each command's help shows its forms and none of
+// the global flags; printCommandUsage relies on Parse defining flags first.
+func TestCommandUsage(t *testing.T) {
+	for _, c := range cmd.All() {
+		var b strings.Builder
+		printCommandUsage(&b, c)
+		for _, u := range c.Usage {
+			synopsis, _, _ := strings.Cut(u, "\t")
+			if !strings.Contains(b.String(), "glinet-cli "+synopsis) {
+				t.Errorf("%s help lacks %q:\n%s", c.Name, synopsis, b.String())
+			}
+		}
+		if strings.Contains(b.String(), "-url") {
+			t.Errorf("%s help shows global flags:\n%s", c.Name, b.String())
+		}
 	}
 }

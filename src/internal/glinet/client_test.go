@@ -2,6 +2,7 @@ package glinet
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -82,18 +83,174 @@ func TestLoginWrongPassword(t *testing.T) {
 	}
 }
 
-func TestUptime(t *testing.T) {
+func TestStatus(t *testing.T) {
 	c := loggedIn(t, map[string]glinettest.Handler{
 		"system.get_status": func(json.RawMessage) any {
-			return map[string]any{"system": map[string]any{"uptime": 90061.5}}
+			return map[string]any{
+				"network": []map[string]any{
+					{"interface": "wan", "up": true, "online": true},
+					{"interface": "wwan\x1b", "up": false, "online": false},
+				},
+				"system": map[string]any{
+					"uptime":            90061.5,
+					"load_average":      [3]float64{2.01, 0.89, 0.33},
+					"memory_total":      126943232,
+					"memory_free":       78471168,
+					"memory_buff_cache": 16777216,
+					"flash_total":       106278912,
+					"flash_free":        105918464,
+				},
+			}
 		},
 	})
-	got, err := c.Uptime(t.Context())
+	got, err := c.Status(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := 25*time.Hour + time.Minute + 1500*time.Millisecond; got != want {
-		t.Errorf("Uptime() = %v, want %v", got, want)
+	want := SystemStatus{
+		Uptime:          25*time.Hour + time.Minute + 1500*time.Millisecond,
+		LoadAverage:     [3]float64{2.01, 0.89, 0.33},
+		MemoryTotal:     126943232,
+		MemoryFree:      78471168,
+		MemoryBuffCache: 16777216,
+		FlashTotal:      106278912,
+		FlashFree:       105918464,
+		Networks: []Network{
+			{Interface: "wan", Online: true},
+			{Interface: "wwan?"},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Status() = %+v, want %+v", got, want)
+	}
+}
+
+func TestInfo(t *testing.T) {
+	c := loggedIn(t, map[string]glinettest.Handler{
+		"system.get_info": func(json.RawMessage) any {
+			return map[string]any{
+				"model":            "xe300",
+				"mac":              "94:83:C4:0C:74:9A",
+				"firmware_version": "4.9.0",
+				"board_info":       map[string]any{"hostname": "GL\u001b[2J-AXT1800"},
+			}
+		},
+	})
+	got, err := c.Info(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := DeviceInfo{
+		Model:           "xe300",
+		MAC:             "94:83:C4:0C:74:9A",
+		FirmwareVersion: "4.9.0",
+		Hostname:        "GL?[2J-AXT1800", // ESC sanitized by printable()
+	}
+	if got != want {
+		t.Errorf("Info() = %+v, want %+v", got, want)
+	}
+}
+
+func TestWanStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		result  string
+		want    WanStatus
+		wantErr bool
+		noWAN   bool // error must wrap ErrNoWAN
+	}{
+		{
+			name:    "static",
+			result:  `{"mode":0,"status":1,"protocol":"static","ipv4":{"ip":"192.168.113.137/24","gateway":"192.168.113.1","dns":["8.8.8.8","8.8.4.4"]}}`,
+			want:    WanStatus{Protocol: "static", Status: 1, IPv4: WanIPv4{IP: "192.168.113.137/24", Gateway: "192.168.113.1", DNS: []string{"8.8.8.8", "8.8.4.4"}}},
+			wantErr: false,
+		},
+		{
+			name:    "negative err_code",
+			result:  `{"mode":0,"status":1,"protocol":"static","ipv4":{"ip":"192.168.113.137/24","gateway":"192.168.113.1","dns":["8.8.8.8","8.8.4.4"]},"err_code":-4}`,
+			wantErr: true,
+			noWAN:   true,
+		},
+		{
+			name:    "empty protocol",
+			result:  `{"mode":0,"status":1,"ipv4":{"ip":"192.168.113.137/24","gateway":"192.168.113.1","dns":["8.8.8.8"]}}`,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := loggedIn(t, map[string]glinettest.Handler{
+				"cable.get_status": func(json.RawMessage) any { return json.RawMessage(tt.result) },
+			})
+			got, err := c.WanStatus(t.Context())
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("WanStatus() = %+v, want error", got)
+				}
+				if errors.Is(err, ErrNoWAN) != tt.noWAN {
+					t.Errorf("errors.Is(%v, ErrNoWAN) = %v, want %v", err, !tt.noWAN, tt.noWAN)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("WanStatus() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckFirmware(t *testing.T) {
+	tests := []struct {
+		name    string
+		result  string
+		want    FirmwareUpdate
+		wantErr bool
+	}{
+		{
+			name:    "update available",
+			result:  `{"current_version":"4.9.0","version_new":"4.10.0"}`,
+			want:    FirmwareUpdate{NewVersion: "4.10.0"},
+			wantErr: false,
+		},
+		{
+			name:    "up to date",
+			result:  `{"current_version":"4.9.0"}`,
+			want:    FirmwareUpdate{},
+			wantErr: false,
+		},
+		{
+			name:    "empty current version",
+			result:  `{"current_version":""}`,
+			wantErr: true,
+		},
+		{
+			name:    "negative err_code",
+			result:  `{"current_version":"4.9.0","err_code":-2}`,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := loggedIn(t, map[string]glinettest.Handler{
+				"upgrade.check_firmware_online": func(json.RawMessage) any { return json.RawMessage(tt.result) },
+			})
+			got, err := c.CheckFirmware(t.Context())
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("CheckFirmware() = %+v, want error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("CheckFirmware() = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }
 

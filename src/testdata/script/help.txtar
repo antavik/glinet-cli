@@ -10,9 +10,35 @@ exits 2 glinet-cli
 ! stdout .
 cmp stderr usage.txt
 
-# -h prints the same help and exits 0.
-exits 0 glinet-cli -h
-cmp stderr usage.txt
+# Asked-for help goes to stdout and exits 0.
+exec glinet-cli -h
+cmp stdout usage.txt
+! stderr .
+exec glinet-cli -help
+cmp stdout usage.txt
+exec glinet-cli help
+cmp stdout usage.txt
+exec glinet-cli help -h
+cmp stdout usage.txt
+
+# Command help: its forms and only its own flags.
+exec glinet-cli vpn -h
+cmp stdout vpn_usage.txt
+! stderr .
+exec glinet-cli vpn on -all -help
+cmp stdout vpn_usage.txt
+exec glinet-cli help vpn
+cmp stdout vpn_usage.txt
+exec glinet-cli help web
+cmp stdout web_usage.txt
+exits 2 glinet-cli help reboot
+stderr '^glinet-cli: unknown command "reboot"$'
+exits 2 glinet-cli help vpn on
+stderr '^glinet-cli: help takes at most one command$'
+
+# A command's flags stay out of the top-level help.
+exits 2 glinet-cli vpn -bogus
+cmp stderr vpn_bogus.txt
 
 # Usage errors: the cause, then the help, exit 2. TestParseCommandLine
 # covers which arguments each command takes.
@@ -47,7 +73,7 @@ Usage: glinet-cli [flags] <command>
 Commands:
   auth [login]                          check password and save it in the OS keychain
   auth logout                           remove the saved password
-  status                                show router uptime
+  status [-json]                        show router overview
   vpn [status]                          list VPN tunnels
   vpn on <id|name> | -all [-wait]       turn VPN tunnel(s) on (-wait: until connected)
   vpn off <id|name> | -all              turn VPN tunnel(s) off
@@ -66,3 +92,48 @@ Flags:
     	router username (env GLINET_USER) (default "root")
   -version
     	print version and exit
+
+Run "glinet-cli help <command>" for command details.
+-- vpn_usage.txt --
+Usage:
+  glinet-cli vpn [status]                          list VPN tunnels
+  glinet-cli vpn on <id|name> | -all [-wait]       turn VPN tunnel(s) on (-wait: until connected)
+  glinet-cli vpn off <id|name> | -all              turn VPN tunnel(s) off
+  glinet-cli vpn restart <id|name> | -all [-wait]  restart VPN tunnel(s), off then on (-wait: until connected)
+
+Flags:
+  -all
+    	target every tunnel
+  -wait
+    	after on or restart, wait until the tunnel is connected
+-- web_usage.txt --
+Usage:
+  glinet-cli web  open the router web interface in browser
+-- vpn_bogus.txt --
+glinet-cli: flag provided but not defined: -bogus
+Usage: glinet-cli [flags] <command>
+
+Commands:
+  auth [login]                          check password and save it in the OS keychain
+  auth logout                           remove the saved password
+  status [-json]                        show router overview
+  vpn [status]                          list VPN tunnels
+  vpn on <id|name> | -all [-wait]       turn VPN tunnel(s) on (-wait: until connected)
+  vpn off <id|name> | -all              turn VPN tunnel(s) off
+  vpn restart <id|name> | -all [-wait]  restart VPN tunnel(s), off then on (-wait: until connected)
+  web                                   open the router web interface in browser
+
+Environment:
+  GLINET_PASSWORD  router password; overrides the saved one
+
+Flags:
+  -timeout duration
+    	timeout for router requests (default 30s)
+  -url string
+    	router URL (env GLINET_URL) (default "http://192.168.8.1")
+  -user string
+    	router username (env GLINET_USER) (default "root")
+  -version
+    	print version and exit
+
+Run "glinet-cli help <command>" for command details.
